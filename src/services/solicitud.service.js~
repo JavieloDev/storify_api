@@ -1,0 +1,207 @@
+const {Op, fn, col} = require('sequelize');
+
+class SolicitudService {
+    constructor(sequelizeInstance) {
+        this.model = sequelizeInstance.models.SOLICITUD;
+    }
+
+    // =========================
+    // CREATE
+    // =========================
+    async create(data) {
+        return this.model.create(data);
+    }
+
+
+    // =========================
+    // READ - by ID
+    // =========================
+    async findById(id) {
+        return await this.model.findByPk(id);
+    }
+
+    // =========================
+    // READ - paginated + filters
+    // =========================
+    async findAll({
+                      page = 1,
+                      limit = 10,
+                      filters = {}
+                  } = {}) {
+
+        const {SOLICITUD, TRANSACCION} = this.model.sequelize.models;
+
+        const safeLimit = Math.min(parseInt(limit) || 10, 100);
+        const currentPage = parseInt(page) || 1;
+        const offset = (currentPage - 1) * safeLimit;
+        const where = this._buildFilters(filters);
+        const total = await SOLICITUD.count({
+            where
+        });
+
+        const rows = await SOLICITUD.findAll({
+            where,
+            limit: safeLimit,
+            offset,
+            order: [['id', 'DESC']],
+            include: [
+                {
+                    model: TRANSACCION,
+                    as: 'transacciones',
+                    required: false
+                }
+            ]
+        });
+
+        const totalPages = Math.ceil(total / safeLimit);
+        const summaryResult = await SOLICITUD.findAll({
+            attributes: [
+                'estado',
+                [fn('COUNT', col('estado')), 'total']
+            ],
+            where,
+            group: ['estado'],
+            raw: true
+        });
+
+        const summary = {};
+        let totalGeneral = 0;
+
+        summaryResult.forEach(item => {
+            const estado = item.estado;
+            const count = Number(item.total) || 0;
+
+            summary[estado] = count;
+            totalGeneral += count;
+        });
+
+        summary.Total = totalGeneral;
+
+        return {
+            status: 'success',
+            code: 200,
+            message: 'Solicitudes obtenidas correctamente',
+            data: rows.map(r => r.toJSON()),
+            pagination: {
+                page: currentPage,
+                limit: safeLimit,
+                total,
+                total_pages: totalPages
+            },
+            summary: summary
+        };
+    }
+
+    // =========================
+    // UPDATE
+    // =========================
+    async update(id, data) {
+        const record = await this.findById(id);
+        if (!record) {
+            throw new Error('Solicitud no encontrada');
+        }
+
+        return await record.update(data);
+    }
+
+    // =========================
+    // DELETE
+    // =========================
+    async delete(id) {
+        const record = await this.findById(id);
+        if (!record) {
+            throw new Error('Solicitud no encontrada');
+        }
+
+        await record.destroy();
+        return {deleted: true};
+    }
+
+    // =========================
+    // PRIVATE - filters builder
+    // =========================
+
+    _buildFilters(filters) {
+        const {Op, fn, col} = require('sequelize');
+        const where = {};
+
+        if (filters.ci) {
+            where.ci = {[Op.like]: `%${filters.ci}%`};
+        }
+
+        if (filters.cliente) {
+            where.cliente = {[Op.like]: `%${filters.cliente}%`};
+        }
+
+        if (filters.numePeticion) {
+            where.numePeticion = Number(filters.numePeticion);
+        }
+
+        if (filters.num_despacho) {
+            where.num_despacho = Number(filters.num_despacho);
+        }
+
+        if (filters.accion) {
+            where.accion = Number(filters.accion);
+        }
+
+        if (filters.tarjeta) {
+            where.tarjeta = {[Op.like]: `%${filters.tarjeta}%`};
+        }
+
+        if (filters.estado) {
+            where.estado = filters.estado;
+        }
+
+        if (filters.organizacion) {
+            where.organizacion = {
+                [Op.like]: `%${filters.organizacion}%`
+            };
+        }
+
+        if (filters.asignadoA) {
+            where.asignadoA = {
+                [Op.like]: `%${filters.asignadoA}%`
+            };
+        }
+
+        if (filters.fechaDesde || filters.fechaHasta) {
+            const dateConditions = {};
+
+            if (filters.fechaDesde) {
+                dateConditions[Op.gte] = new Date(filters.fechaDesde);
+            }
+
+            if (filters.fechaHasta) {
+                const endDate = new Date(filters.fechaHasta);
+                endDate.setHours(23, 59, 59, 999);
+                dateConditions[Op.lte] = endDate;
+            }
+
+            where.CREADO_EL = dateConditions;
+        }
+
+        return where;
+    }
+
+    async generarNumeroPeticion(model, transaction) {
+
+        const last = await model.findOne({
+            attributes: ['numePeticion'],
+            order: [['id', 'DESC']],
+            transaction
+        });
+
+        let nextNumber = 1;
+
+        if (last && last.numePeticion) {
+            const num = parseInt(last.numePeticion);
+            nextNumber = num + 1;
+        }
+
+        return nextNumber;
+    }
+}
+
+module.exports = SolicitudService;
+

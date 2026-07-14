@@ -1,0 +1,53 @@
+const {Model, DataTypes} = require('sequelize');
+
+const TABLE_SOLICITUD = 'T_SOLICIT';
+
+const SolicitudSchema = {
+    id: {
+        field: 'Id', type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true,
+    }, ci: {
+        field: 'Ci', type: DataTypes.STRING, allowNull: false
+    }, numePeticion: {
+        field: 'NUM_PETICION', type: DataTypes.INTEGER, allowNull: true
+    }, cliente: {
+        field: 'CLIENTE', type: DataTypes.STRING, allowNull: true
+    }, tarjeta: {
+        field: 'Tarjeta', type: DataTypes.STRING, allowNull: true
+    }, organizacion: {
+        field: 'ORGANIZACION', type: DataTypes.STRING, allowNull: true
+    }, razon: {
+        field: 'RAZON', type: DataTypes.STRING, allowNull: true
+    }, asignadoA: {
+        field: 'ASIGNADO', type: DataTypes.STRING, allowNull: true
+    }, creado_el: {
+        field: 'CREADO_EL', type: DataTypes.STRING, allowNull: true
+    }, actualizado_el: {
+        field: 'ACTUALIZADO_EL', type: DataTypes.STRING, allowNull: true
+    }, estado: {
+        field: 'ESTADO', type: DataTypes.STRING, allowNull: true
+    }, solucion: {
+        field: 'SOLUCION', type: DataTypes.STRING, allowNull: true
+    }, cargo_asignado: {
+        field: 'CARGO_ASIGNADO', type: DataTypes.STRING, allowNull: true
+    },cargo_titular: {
+        field: 'CARGO_TITULAR', type: DataTypes.STRING, allowNull: true
+    },num_despacho: {
+        field: 'NUM_DESPACHO', type: DataTypes.NUMBER, allowNull: true
+    }
+};
+
+class SOLICITUD extends Model {
+    static associate(models) {
+        SOLICITUD.hasMany(models.TRANSACCION, {
+            foreignKey: 'solicitudId', as: 'transacciones'
+        });
+    }
+
+    static config(sequelize) {
+        return {
+            sequelize, tableName: TABLE_SOLICITUD, schema: 'dbo', modelName: 'SOLICITUD', timestamps: false,
+        };
+    }
+}
+
+module.exports = {TABLE_SOLICITUD, SOLICITUD, SolicitudSchema};
