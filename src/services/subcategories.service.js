@@ -159,6 +159,10 @@ class SubcategoryService {
             where.name = {[Op.like]: `%${filters.name}%`};
         }
 
+        if (filters.business_id) {
+            where.business_id = filters.business_id;
+        }
+
         if (filters.category_id) {
             where.category_id = filters.category_id;
         }
