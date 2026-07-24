@@ -14,54 +14,86 @@ class ProductService {
     async findAll({
                       page = 1,
                       limit = 10,
-                      filters = {}
+                      filters = {},
+                      not_paginated = false
                   } = {}) {
         const safeLimit = Math.min(Number(limit) || 10, 100);
         const currentPage = Number(page) || 1;
         const offset = (currentPage - 1) * safeLimit;
 
         const where = this._buildFilters(filters);
+        let totalPages = 0
 
-        const [total, rows] = await Promise.all([
-            this.model.count({where}),
-            this.model.findAll({
-                where,
-                limit: safeLimit,
-                offset,
-                order: [['created_at', 'DESC']],
-                include: [
-                    {
-                        model: this.sequelize.models.Subcategory,
-                        as: 'subcategory',
-                        required: false,
-                        include: [
-                            {
-                                model: this.sequelize.models.Category,
-                                as: 'category',
-                                required: false,
-                            }
-                        ],
-                    }
-                ],
-                raw: true,
-                nest: true,
-            })
-        ]);
+        if (!not_paginated) {
+            const [total, rows] = await Promise.all([
+                this.model.count({where}),
+                this.model.findAll({
+                    where,
+                    limit: safeLimit,
+                    offset,
+                    order: [['created_at', 'DESC']],
+                    include: [
+                        {
+                            model: this.sequelize.models.Subcategory,
+                            as: 'subcategory',
+                            required: false,
+                            include: [
+                                {
+                                    model: this.sequelize.models.Category,
+                                    as: 'category',
+                                    required: false,
+                                }
+                            ],
+                        }
+                    ],
+                    raw: true,
+                    nest: true,
+                })
+            ]);
+            totalPages = Math.ceil(total / safeLimit);
 
-        const totalPages = Math.ceil(total / safeLimit);
+            return {
+                status: 'success',
+                code: 200,
+                message: 'Productos obtenidos correctamente',
+                data: rows,
+                pagination: {
+                    page: currentPage,
+                    limit: safeLimit,
+                    total,
+                    total_pages: totalPages
+                }
+            };
+        } else {
+            const rows = await Promise.all([
+                this.model.findAll({
+                    order: [['created_at', 'DESC']],
+                    include: [
+                        {
+                            model: this.sequelize.models.Subcategory,
+                            as: 'subcategory',
+                            required: false,
+                            include: [
+                                {
+                                    model: this.sequelize.models.Category,
+                                    as: 'category',
+                                    required: false,
+                                }
+                            ],
+                        }
+                    ],
+                    raw: true,
+                    nest: true,
+                })
+            ]);
 
-        return {
-            status: 'success',
-            code: 200,
-            message: 'Productos obtenidos correctamente',
-            data: rows,
-            pagination: {
-                page: currentPage,
-                limit: safeLimit,
-                total,
-                total_pages: totalPages
-            }
-        };
+            return {
+                status: 'success',
+                code: 200,
+                message: 'Productos obtenidos correctamente',
+                data: rows,
+            };
+        }
     }
 
     // ✅ FIX: ahora recibe 'file' y lo agrega a 'data' antes de crear
@@ -203,11 +235,12 @@ class ProductService {
         });
     }
 
-    async findByBusiness(businessId, page = 1, limit = 10, filters = {}) {
+    async findByBusiness(businessId, page = 1, limit = 10, filters = {}, not_paginated) {
         return this.findAll({
             page,
             limit,
-            filters: {...filters, business_id: businessId}
+            filters: {...filters, business_id: businessId},
+            not_paginated
         });
     }
 

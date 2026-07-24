@@ -9,9 +9,10 @@ router.get('/:businessId/products', async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {businessId} = req.params;
-        const {page = 1, limit = 10, filter = {}} = req.query;
+        const {page = 1, limit = 10, filter = {}, not_paginated = false} = req.query;
+        console.log(not_paginated);
 
-        const result = await service.findByBusiness(businessId, page, limit, filter);
+        const result = await service.findByBusiness(businessId, page, limit, filter,not_paginated);
         res.json(result);
     } catch (error) {
         console.error('MENSAJE:', error.message);
