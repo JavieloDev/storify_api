@@ -58,6 +58,7 @@ router.post('/create', async (req, res, next) => {
             priority: parseInt(req.body.priority) || 0,
             active: req.body.active !== undefined ? req.body.active : true,
             icon: req.body.icon || null,
+            business_id: req.body.business_id,
         };
 
         const created = await service.create(data);
@@ -96,6 +97,7 @@ router.put('/:id', async (req, res, next) => {
             priority: parseInt(req.body.priority) || 0,
             active: req.body.active !== undefined ? req.body.active : true,
             icon: req.body.icon || null,
+            business_id: req.body.business_id,
         };
 
         const updated = await service.update(id, data);

@@ -65,8 +65,13 @@ class SubcategoryService {
         };
     }
 
+    /**
+     * Busca una subcategoría por ID
+     * @param {string|number} id - ID de la subcategoría
+     * @returns {Promise<Object>} - Respuesta con formato unificado
+     */
     async findById(id) {
-        return await this.model.findByPk(id, {
+        const record = await this.model.findByPk(id, {
             include: [
                 {
                     model: this.sequelize.models.Category,
@@ -75,6 +80,22 @@ class SubcategoryService {
                 }
             ]
         });
+
+        if (!record) {
+            return {
+                status: 'error',
+                code: 404,
+                message: 'Subcategoría no encontrada',
+                data: null
+            };
+        }
+
+        return {
+            status: 'success',
+            code: 200,
+            message: 'Subcategoría obtenida correctamente',
+            data: record
+        };
     }
 
     async findAll({

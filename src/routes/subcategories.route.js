@@ -1,7 +1,7 @@
 // src/routes/subcategories.route.js
 const express = require('express');
 const router = express.Router();
-const { getService } = require('../middlewares/headers');
+const {getService} = require('../middlewares/headers');
 
 // ============================
 // LISTAR (paginado + filtros)
@@ -11,9 +11,9 @@ router.get('/:businessId/subcategories', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
         const {businessId} = req.params;
-        const {page = 1, limit = 10,filters = {}} = req.query;
+        const {page = 1, limit = 10, filters = {}} = req.query;
 
-        const result = await service.findBySubCategories(businessId, page, limit,filters);
+        const result = await service.findBySubCategories(businessId, page, limit, filters);
         res.json(result);
     } catch (error) {
         console.error('MENSAJE:', error.message);
@@ -30,12 +30,12 @@ router.get('/:businessId/subcategories', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
-        const { id } = req.params;
+        const {id} = req.params;
 
         const record = await service.findById(id);
 
         if (!record) {
-            return res.status(404).json({ message: 'Subcategoría no encontrada' });
+            return res.status(404).json({message: 'Subcategoría no encontrada'});
         }
 
         res.json(record);
@@ -58,6 +58,7 @@ router.post('/create', async (req, res, next) => {
             priority: Number(req.body.priority) || 0,
             active: req.body.active !== undefined ? req.body.active : true,
             category_id: req.body.category_id,
+            business_id: req.body.business_id,
         };
 
         const created = await service.create(data);
@@ -81,7 +82,7 @@ router.post('/create', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
-        const { id } = req.params;
+        const {id} = req.params;
 
         const data = {
             name: req.body.name,
@@ -89,6 +90,7 @@ router.put('/:id', async (req, res, next) => {
             priority: Number(req.body.priority) || 0,
             active: req.body.active !== undefined ? req.body.active : true,
             category_id: req.body.category_id,
+            business_id: req.body.business_id,
         };
 
         const updated = await service.update(id, data);
@@ -112,7 +114,7 @@ router.put('/:id', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
-        const { id } = req.params;
+        const {id} = req.params;
 
         const result = await service.delete(id);
 
@@ -144,8 +146,8 @@ router.delete('/:id', async (req, res, next) => {
 router.get('/by-category/:categoryId', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
-        const { categoryId } = req.params;
-        const { page = 1, limit = 10 } = req.query;
+        const {categoryId} = req.params;
+        const {page = 1, limit = 10} = req.query;
 
         const result = await service.findByCategory(categoryId, page, limit);
         res.json(result);
@@ -161,7 +163,7 @@ router.get('/by-category/:categoryId', async (req, res, next) => {
 router.get('/active', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
-        const { page = 1, limit = 10 } = req.query;
+        const {page = 1, limit = 10} = req.query;
         const result = await service.findActive(page, limit);
         res.json(result);
     } catch (error) {
@@ -176,10 +178,10 @@ router.get('/active', async (req, res, next) => {
 router.get('/search', async (req, res, next) => {
     try {
         const service = getService(req, 'SUBCATEGORY');
-        const { q, limit = 10 } = req.query;
+        const {q, limit = 10} = req.query;
 
         if (!q) {
-            return res.status(400).json({ message: 'El parámetro "q" es requerido' });
+            return res.status(400).json({message: 'El parámetro "q" es requerido'});
         }
 
         const result = await service.searchByName(q, limit);

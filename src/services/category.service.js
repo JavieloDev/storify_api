@@ -79,7 +79,23 @@ class CategoryService {
     }
 
     async findById(id) {
-        return await this.model.findByPk(id);
+        const record = await this.model.findByPk(id);
+
+        if (!record) {
+            return {
+                status: 'error',
+                code: 404,
+                message: 'Categoría no encontrada',
+                data: null
+            };
+        }
+
+        return {
+            status: 'success',
+            code: 200,
+            message: 'Categoría obtenida correctamente',
+            data: record
+        };
     }
 
     async findAll({
@@ -133,7 +149,7 @@ class CategoryService {
         });
     }
 
-    async findByCategories(businessId, page = 1, limit = 10,filters={}) {
+    async findByCategories(businessId, page = 1, limit = 10, filters = {}) {
         return this.findAll({
             page,
             limit,
