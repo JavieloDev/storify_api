@@ -21,6 +21,11 @@ const ProductSchema = {
         type: DataTypes.TEXT,
         allowNull: true,
     },
+    barcode: {
+        field: 'barcode',
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
     brand: {
         field: 'brand',
         type: DataTypes.STRING(100),
@@ -40,6 +45,19 @@ const ProductSchema = {
     discount: {
         field: 'discount',
         type: DataTypes.DECIMAL(5, 2),
+        allowNull: false,
+        defaultValue: 0,
+    },
+
+    profit_percentage: {
+        field: 'profit_percentage',
+        type: DataTypes.DECIMAL(5, 2),
+        allowNull: false,
+        defaultValue: 0,
+    },
+    sales_price: {
+        field: 'sales_price',
+        type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
         defaultValue: 0,
     },
@@ -160,6 +178,9 @@ class Product extends Model {
                     if (!product.stock_status) {
                         product.stock_status = product.quantity === 0 ? 'out' : 'in_stock';
                     }
+                    product.sales_price = Product.computeSalesPrice(
+                        product.price, product.discount, product.profit_percentage
+                    );
                 },
                 beforeUpdate: (product) => {
                     product.updated_at = new Date();
@@ -171,9 +192,26 @@ class Product extends Model {
                         else if (qty <= 10) product.stock_status = 'medium';
                         else product.stock_status = 'in_stock';
                     }
+                    if (product.changed('price') || product.changed('discount') || product.changed('profit_percentage')) {
+                        product.sales_price = Product.computeSalesPrice(
+                            product.price, product.discount, product.profit_percentage
+                        );
+                    }
                 }
             }
         };
+    }
+
+    static computeSalesPrice(price, discount, profitPercentage) {
+        const p = Number(price) || 0;
+        const d = Number(discount) || 0;
+        const g = Number(profitPercentage) || 0;
+
+        const priceWithDiscount = p - (p * d / 100);
+        const gananciaValor = p * g / 100;
+        const finalPrice = priceWithDiscount + gananciaValor;
+
+        return Math.round(finalPrice * 100) / 100;
     }
 }
 

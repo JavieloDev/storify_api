@@ -211,7 +211,7 @@ class ProductService {
     }
 
     async findById(id) {
-        return await this.model.findByPk(id, {
+        const record = await this.model.findByPk(id, {
             include: [
                 {
                     model: this.sequelize.models.Subcategory,
@@ -225,6 +225,22 @@ class ProductService {
                 }
             ]
         });
+
+        if (!record) {
+            return {
+                status: 'error',
+                code: 404,
+                message: 'Producto no encontrado',
+                data: null
+            };
+        }
+
+        return {
+            status: 'success',
+            code: 200,
+            message: 'Producto obtenido correctamente',
+            data: record
+        };
     }
 
     async findBySubcategory(subcategoryId, page = 1, limit = 10) {

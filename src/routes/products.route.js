@@ -12,7 +12,7 @@ router.get('/:businessId/products', async (req, res, next) => {
         const {page = 1, limit = 10, filter = {}, not_paginated = false} = req.query;
         console.log(not_paginated);
 
-        const result = await service.findByBusiness(businessId, page, limit, filter,not_paginated);
+        const result = await service.findByBusiness(businessId, page, limit, filter, not_paginated);
         res.json(result);
     } catch (error) {
         console.error('MENSAJE:', error.message);
@@ -62,16 +62,19 @@ router.post('/create', uploadImage, async (req, res, next) => {
             name: productData.name,
             description: productData.description || '',
             brand: productData.brand || '',
+            barcode: productData.barcode || null,
             price: parseFloat(productData.price) || 0,
-            original_price: parseFloat(productData.originalPrice) || parseFloat(productData.price) || 0,
+            original_price: parseFloat(productData.original_price) || parseFloat(productData.price) || 0,
             discount: parseFloat(productData.discount) || 0,
+            profit_percentage: parseFloat(productData.profit_percentage) || 0,
+            sales_price: parseFloat(productData.sales_price) || 0,
             subcategory_id: productData.subcategory_id || productData.sub_category || null,
-            quantity: parseInt(productData.stock) || parseInt(productData.quantity) || 0,
+            quantity: parseInt(productData.quantity) || parseInt(productData.stock) || 0,
             colors: productData.colors || [],
             featured: productData.featured === true || productData.featured === 'true' || false,
-            on_sale: productData.onSale === true || productData.onSale === 'true' || false,
-            is_new: productData.isNew === true || productData.isNew === 'true' || false,
-            stock_status: productData.stockStatus || 'in_stock',
+            on_sale: productData.on_sale === true || productData.on_sale === 'true' || false,
+            is_new: productData.is_new === true || productData.is_new === 'true' || false,
+            stock_status: productData.stock_status || 'in_stock',
             is_active: true,
             business_id: productData.business_id,
         };
@@ -129,16 +132,19 @@ router.put('/:id', uploadImage, async (req, res, next) => {
             name: productData.name,
             description: productData.description || '',
             brand: productData.brand || '',
+            barcode: productData.barcode || null,
             price: parseFloat(productData.price) || 0,
-            original_price: parseFloat(productData.originalPrice) || parseFloat(productData.price) || 0,
+            original_price: parseFloat(productData.original_price) || parseFloat(productData.price) || 0,
             discount: parseFloat(productData.discount) || 0,
+            profit_percentage: parseFloat(productData.profit_percentage) || 0,
+            sales_price: parseFloat(productData.sales_price) || 0,
             subcategory_id: productData.subcategory_id || productData.sub_category || null,
             quantity: parseInt(productData.quantity) || 0,
             colors: productData.colors || [],
             featured: productData.featured === true || productData.featured === 'true' || false,
-            on_sale: productData.onSale === true || productData.onSale === 'true' || false,
-            is_new: productData.isNew === true || productData.isNew === 'true' || false,
-            stock_status: productData.stockStatus || 'in_stock',
+            on_sale: productData.on_sale === true || productData.on_sale === 'true' || false,
+            is_new: productData.is_new === true || productData.is_new === 'true' || false,
+            stock_status: productData.stock_status || 'in_stock',
             business_id: productData.business_id,
         };
 

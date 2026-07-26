@@ -48,12 +48,12 @@ class CategoryService {
     }
 
     async delete(id) {
-        const [record, subcategoryCount] = await Promise.all([
+        const [result, subcategoryCount] = await Promise.all([
             this.findById(id),
             this.sequelize.models.Subcategory.count({where: {category_id: id}})
         ]);
 
-        if (!record) {
+        if (!result.data) {
             return {
                 status: 'error',
                 code: 404,
@@ -69,7 +69,7 @@ class CategoryService {
             };
         }
 
-        await record.destroy();
+        await result.data.destroy();
         return {
             status: 'success',
             code: 200,

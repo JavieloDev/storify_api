@@ -21,16 +21,14 @@ class SubcategoryService {
     }
 
     async update(id, data) {
-        // findById (con include de Category) y la verificación de la nueva categoría
-        // (si aplica) son independientes -> se paralelizan
-        const [record, newCategory] = await Promise.all([
+        const [result, newCategory] = await Promise.all([
             this.findById(id),
             data.category_id
                 ? this.sequelize.models.Category.findByPk(data.category_id)
                 : Promise.resolve(null)
         ]);
 
-        if (!record) {
+        if (!result.data) {
             throw new Error('Subcategoría no encontrada');
         }
 
@@ -38,7 +36,7 @@ class SubcategoryService {
             throw new Error('La categoría especificada no existe');
         }
 
-        return await record.update(data);
+        return await result.data.update(data);
     }
 
     async delete(id) {
