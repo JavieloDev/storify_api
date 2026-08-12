@@ -16,9 +16,9 @@ const {getService} = require("../middlewares/headers");
 // ============================
 router.post('/', /* authMiddleware, */ async (req, res, next) => {
     try {
-        const {page = 1, limit = 10, filters = {}} = req.body;
+        const {page = 1, limit = 10, where = {}} = req.body;
         const service = getService(req, 'BUSINESS');
-        const result = await service.findAll({page, limit, filters});
+        const result = await service.findAll({page, limit, where});
         res.status(result.code).json(result);
     } catch (error) {
         next(error);

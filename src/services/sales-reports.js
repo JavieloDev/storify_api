@@ -226,7 +226,7 @@ class SalesReportService {
         const [products, soldStats] = await Promise.all([
             this.productModel.findAll({
                 where: {business_id: businessId}, // ajustar si business_id no vive en Product
-                attributes: ['id', 'name', 'brand', 'image', 'price', 'quantity'],
+                attributes: ['id', 'name', 'brand', 'image', 'price', 'quantity', 'sales_price'],
                 raw: true,
             }),
             this.itemModel.findAll({
@@ -266,12 +266,13 @@ class SalesReportService {
                 producto: p.name,
                 brand: p.brand,
                 image: p.image,
-                precio: Number(p.price),
+                sales_price: p.sales_price,
+                price: Number(p.price),
                 cantidad,
                 vendido: sold.vendido,
                 disponible: cantidad - sold.vendido,
                 subtotal: sold.subtotal,
-                ganancia: null,
+                ganancia: (p.sales_price - Number(p.price)) * sold.vendido,
             };
         });
     }

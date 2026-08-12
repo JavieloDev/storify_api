@@ -6,6 +6,8 @@ const SubcategoryService = require("../services/subcategories.service");
 const BusinessService = require("../services/business.service");
 const OrderService = require("../services/order.service");
 const SalesReportService = require("../services/sales-reports");
+const DeviceService = require("../services/device.service");
+const SalesPoint = require("../services/sales-point.service");
 
 function getService(req, modelName) {
     if (!sequelize) {
@@ -25,6 +27,10 @@ function getService(req, modelName) {
             return new OrderService(sequelize);
         case 'SALES_REPORT':
             return new SalesReportService(sequelize);
+        case 'DEVICE':
+            return new DeviceService(sequelize);
+        case 'SALES_POINT':
+            return new SalesPoint(sequelize);
         default:
             throw new Error(`Servicio no encontrado para el modelo: ${modelName}`);
     }

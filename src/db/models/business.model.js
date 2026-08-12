@@ -57,7 +57,7 @@ const BusinessSchema = {
         field: 'status',
         type: DataTypes.ENUM('active', 'inactive', 'pending', 'suspended'),
         allowNull: false,
-        defaultValue: 'pending',
+        defaultValue: 'active',
     },
     suspension_reason: {
         field: 'suspension_reason',

@@ -91,7 +91,7 @@ class BusinessService {
     async findAll({
                       page = 1,
                       limit = 10,
-                      filters = {},
+                      where = {},
                       orderBy = 'created_at',
                       orderDirection = 'DESC'
                   } = {}) {
@@ -100,12 +100,12 @@ class BusinessService {
         const currentPage = Number(page) || 1;
         const offset = (currentPage - 1) * safeLimit;
 
-        const where = this._buildFilters(filters);
+        const filters = this._buildFilters(where);
 
         const [total, rows] = await Promise.all([
-            this.model.count({where}),
+            this.model.count({where: filters}),
             this.model.findAll({
-                where,
+                where: filters,
                 limit: safeLimit,
                 offset,
                 order: [[orderBy, orderDirection]],
@@ -196,22 +196,6 @@ class BusinessService {
         // TODO(auth): validar propiedad antes de permitir reactivar
 
         return record.update({status: 'active', suspension_reason: null});
-    }
-
-    async incrementMetrics(id, {totalProducts = 0, totalOrders = 0, totalRevenue = 0} = {}) {
-        const {literal} = require('sequelize');
-
-        await this.model.update(
-            {
-                total_products: literal(`total_products + ${Number(totalProducts)}`),
-                total_orders: literal(`total_orders + ${Number(totalOrders)}`),
-                total_revenue: literal(`total_revenue + ${Number(totalRevenue)}`),
-                last_activity_at: new Date()
-            },
-            {where: {id}}
-        );
-
-        return this.findById(id);
     }
 
     _buildFilters(filters) {
