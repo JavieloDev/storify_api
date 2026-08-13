@@ -75,6 +75,17 @@ class Device extends Model {
             foreignKey: 'business_id',
             as: 'business'
         });
+        Device.belongsToMany(models.SalesPoint, {
+            through: models.SalesPointDevice,
+            foreignKey: 'device_id',
+            otherKey: 'sales_point_id',
+            as: 'salesPoints'
+        });
+
+        Device.hasMany(models.SalesPointDevice, {
+            foreignKey: 'device_id',
+            as: 'salesPointAssignments'
+        });
     }
 
     static config(sequelize) {

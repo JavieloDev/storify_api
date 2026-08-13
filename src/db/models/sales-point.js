@@ -85,10 +85,24 @@ class SalesPoint extends Model {
             as: 'productAssignments'
         });
 
-        // Usuarios asignados (mockeados por ahora)
+        // Usuarios asignados
         SalesPoint.hasMany(models.SalesPointUser, {
             foreignKey: 'sales_point_id',
             as: 'assignedUsers'
+        });
+
+        // 🆕 Dispositivos asignados (N:M vía SALES_POINT_DEVICES)
+        SalesPoint.belongsToMany(models.Device, {
+            through: models.SalesPointDevice,
+            foreignKey: 'sales_point_id',
+            otherKey: 'device_id',
+            as: 'devices'
+        });
+
+        // Acceso directo a la tabla puente (para ver active por asignación)
+        SalesPoint.hasMany(models.SalesPointDevice, {
+            foreignKey: 'sales_point_id',
+            as: 'deviceAssignments'
         });
     }
 

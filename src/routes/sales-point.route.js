@@ -58,7 +58,9 @@ router.post('/create', async (req, res, next) => {
             business_id: req.body.business_id,
         };
 
-        const created = await service.create(data);
+        const {products = [], users = []} = req.body;
+
+        const created = await service.create(data, {products, users});
 
         res.status(201).json({
             status: 'success',
@@ -68,7 +70,7 @@ router.post('/create', async (req, res, next) => {
         });
     } catch (error) {
         console.error('Error creando punto de venta:', error);
-        next(error);
+        res.status(422).json({status: 'error', code: 422, message: error.message});
     }
 });
 
@@ -257,6 +259,52 @@ router.post('/:id/products', async (req, res, next) => {
     } catch (error) {
         // Los errores de validación de stock vienen como Error normal (mensaje descriptivo)
         res.status(422).json({status: 'error', code: 422, message: error.message});
+    }
+});
+
+// ============================
+// ASIGNAR DISPOSITIVOS (reemplaza el set completo)
+// PUT /sales-points/:id/devices
+// body: { devices: [{ device_id, active? }] | ["deviceId1", ...] }
+// ============================
+router.put('/:id/devices', async (req, res, next) => {
+    try {
+        const service = getService(req, 'SALES_POINT');
+        const {id} = req.params;
+        const {devices = []} = req.body;
+
+        const result = await service.setDevices(id, devices);
+
+        res.json({
+            status: 'success',
+            code: 200,
+            message: 'Dispositivos del punto de venta actualizados',
+            data: result
+        });
+    } catch (error) {
+        console.error('Error asignando dispositivos:', error);
+        next(error);
+    }
+});
+
+// ============================
+// QUITAR UN DISPOSITIVO PUNTUAL
+// DELETE /sales-points/:id/devices/:deviceId
+// ============================
+router.delete('/:id/devices/:deviceId', async (req, res, next) => {
+    try {
+        const service = getService(req, 'SALES_POINT');
+        const {id, deviceId} = req.params;
+
+        const removed = await service.removeDevice(id, deviceId);
+
+        if (!removed) {
+            return res.status(404).json({message: 'Asignación no encontrada'});
+        }
+
+        res.json({status: 'success', code: 200, message: 'Dispositivo removido del punto de venta'});
+    } catch (error) {
+        next(error);
     }
 });
 

@@ -24,11 +24,66 @@ class SalesPointService {
         }
     }
 
-    async create(data) {
+    async create(data, {products = [], users = []} = {}) {
         if (data.business_id) {
             await this._assertBusinessActive(data.business_id);
         }
-        return this.model.create(data);
+
+        if (!Array.isArray(products) || products.length === 0) {
+            throw new Error('Debes asignar al menos un producto al punto de venta');
+        }
+
+        const normalizedProducts = products.map((p) => {
+            const productId = typeof p === 'string' ? p : p.product_id;
+            if (!productId) {
+                throw new Error('Cada producto asignado debe tener product_id');
+            }
+            const assignedQuantity = typeof p === 'object' ? Number(p.assigned_quantity) || 0 : 0;
+            if (assignedQuantity < 0) {
+                throw new Error(`La cantidad asignada para el producto ${productId} no puede ser negativa`);
+            }
+            return {
+                product_id: productId,
+                active: typeof p === 'object' && p.active !== undefined ? p.active : true,
+                custom_price: typeof p === 'object' ? (p.custom_price ?? null) : null,
+                assigned_quantity: assignedQuantity,
+            };
+        });
+
+        // Users es opcional al crear; si viene, se normaliza igual que antes.
+        const normalizedUsers = (Array.isArray(users) ? users : []).map((u) => {
+            if (!u.user_id) {
+                throw new Error('Cada usuario asignado debe tener user_id');
+            }
+            return {
+                user_id: u.user_id,
+                user_name: u.user_name || null,
+                role: u.role || 'staff',
+                active: u.active !== undefined ? u.active : true,
+            };
+        });
+
+        return this.sequelize.transaction(async (t) => {
+            const salesPoint = await this.model.create(data, {transaction: t});
+
+            for (const item of normalizedProducts) {
+                await this._assertQuantityAvailable(item.product_id, salesPoint.id, item.assigned_quantity, t);
+            }
+
+            await this.sequelize.models.SalesPointProduct.bulkCreate(
+                normalizedProducts.map((item) => ({sales_point_id: salesPoint.id, ...item})),
+                {transaction: t}
+            );
+
+            if (normalizedUsers.length > 0) {
+                await this.sequelize.models.SalesPointUser.bulkCreate(
+                    normalizedUsers.map((u) => ({sales_point_id: salesPoint.id, ...u})),
+                    {transaction: t}
+                );
+            }
+
+            return salesPoint;
+        });
     }
 
     async update(id, data) {
@@ -36,17 +91,18 @@ class SalesPointService {
             await this._assertBusinessActive(data.business_id);
         }
 
-        const found = await this.findById(id);
-        if (!found.data) {
+        const salesPoint = await this.model.findByPk(id);
+        if (!salesPoint) {
             throw new Error('Punto de venta no encontrado');
         }
-        return await found.data.update(data);
+
+        return salesPoint.update(data);
     }
 
     async delete(id) {
-        const found = await this.findById(id);
+        const salesPoint = await this.model.findByPk(id);
 
-        if (!found.data) {
+        if (!salesPoint) {
             return {
                 status: 'error',
                 code: 404,
@@ -54,7 +110,7 @@ class SalesPointService {
             };
         }
 
-        await found.data.destroy();
+        await salesPoint.destroy();
 
         return {
             status: 'success',
@@ -76,6 +132,12 @@ class SalesPointService {
                 model: this.sequelize.models.SalesPointUser,
                 as: 'assignedUsers',
                 attributes: ['id', 'user_id', 'user_name', 'role', 'active']
+            },
+            {
+                model: this.sequelize.models.Device,
+                as: 'devices',
+                attributes: ['id', 'label', 'status'],
+                through: {attributes: ['active']}
             }
         ] : [];
 
@@ -92,7 +154,6 @@ class SalesPointService {
 
         const plain = record.toJSON ? record.toJSON() : record;
 
-        // 🔥 Aplanar productos también en findById
         const formattedProducts = (plain.products || []).map(product => {
             const pivot = product.SalesPointProduct || {};
             const {SalesPointProduct, ...productData} = product;
@@ -104,10 +165,20 @@ class SalesPointService {
             };
         });
 
+        const formattedDevices = (plain.devices || []).map(device => {
+            const pivot = device.SalesPointDevice || {};
+            const {SalesPointDevice, ...deviceData} = device;
+            return {
+                ...deviceData,
+                active: pivot.active !== undefined ? pivot.active : true,
+            };
+        });
+
         const formattedData = {
             ...plain,
             products: formattedProducts,
             assignedUsers: plain.assignedUsers || [],
+            devices: formattedDevices,
         };
 
         return {
@@ -136,6 +207,7 @@ class SalesPointService {
             limit: safeLimit,
             offset,
             order: [['name', 'ASC']],
+            distinct: true, // 🔧 evita que el count se infle por los JOINs hasMany/belongsToMany
             include: [
                 {
                     model: this.sequelize.models.Product,
@@ -151,6 +223,15 @@ class SalesPointService {
                     as: 'assignedUsers',
                     required: false,
                     attributes: ['id', 'user_id', 'user_name', 'role', 'active']
+                },
+                {
+                    model: this.sequelize.models.Device,
+                    as: 'devices',
+                    required: false,
+                    attributes: ['id', 'label', 'status'],
+                    through: {
+                        attributes: ['active']
+                    }
                 }
             ],
             nest: true,
@@ -158,17 +239,11 @@ class SalesPointService {
 
         const formattedRows = rows.map(record => {
             const plain = record.toJSON ? record.toJSON() : record;
-            const {products, assignedUsers, ...rest} = plain;
+            const {products, assignedUsers, devices, ...rest} = plain;
 
-            // 🔥 Aplanar: mover los datos de SalesPointProduct al nivel del producto
             const formattedProducts = (products || []).map(product => {
-                // Los datos de la tabla intermedia están en product.SalesPointProduct
                 const pivot = product.SalesPointProduct || {};
-
-                // Eliminar el objeto anidado SalesPointProduct
                 const {SalesPointProduct, ...productData} = product;
-
-                // Devolver el producto con los datos del pivot al mismo nivel
                 return {
                     ...productData,
                     assigned_quantity: pivot.assigned_quantity || 0,
@@ -177,10 +252,21 @@ class SalesPointService {
                 };
             });
 
+            // 🔧 Aplanar dispositivos igual que productos: el pivot viene bajo SalesPointDevice
+            const formattedDevices = (devices || []).map(device => {
+                const pivot = device.SalesPointDevice || {};
+                const {SalesPointDevice, ...deviceData} = device;
+                return {
+                    ...deviceData,
+                    active: pivot.active !== undefined ? pivot.active : true,
+                };
+            });
+
             return {
                 ...rest,
                 products: formattedProducts,
                 users: assignedUsers || [],
+                devices: formattedDevices,
             };
         });
 
@@ -390,6 +476,52 @@ class SalesPointService {
     async removeUser(salesPointId, userId) {
         const deleted = await this.sequelize.models.SalesPointUser.destroy({
             where: {sales_point_id: salesPointId, user_id: userId}
+        });
+        return deleted > 0;
+    }
+
+    /**
+     * Reemplaza el set completo de dispositivos asignados a un punto de venta.
+     * Sin validación de stock (los devices no consumen inventario).
+     * `devices`: [{ device_id, active? }] | ["deviceId1", ...]
+     */
+    async setDevices(salesPointId, devices = []) {
+        const salesPoint = await this.model.findByPk(salesPointId);
+        if (!salesPoint) {
+            throw new Error('Punto de venta no encontrado');
+        }
+
+        const normalized = devices.map((d) => {
+            const deviceId = typeof d === 'string' ? d : d.device_id;
+            if (!deviceId) {
+                throw new Error('Cada dispositivo asignado debe tener device_id');
+            }
+            return {
+                device_id: deviceId,
+                active: typeof d === 'object' && d.active !== undefined ? d.active : true,
+            };
+        });
+
+        return this.sequelize.transaction(async (t) => {
+            await this.sequelize.models.SalesPointDevice.destroy({
+                where: {sales_point_id: salesPointId},
+                transaction: t
+            });
+
+            if (normalized.length === 0) return [];
+
+            const rows = normalized.map((item) => ({
+                sales_point_id: salesPointId,
+                ...item,
+            }));
+
+            return this.sequelize.models.SalesPointDevice.bulkCreate(rows, {transaction: t});
+        });
+    }
+
+    async removeDevice(salesPointId, deviceId) {
+        const deleted = await this.sequelize.models.SalesPointDevice.destroy({
+            where: {sales_point_id: salesPointId, device_id: deviceId}
         });
         return deleted > 0;
     }
