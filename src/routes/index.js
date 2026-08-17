@@ -14,8 +14,14 @@ const salesPointRouter = require('./sales-point.route');
 function routerApi(app) {
     const router = express.Router();
     app.use(cors({
-        origin: '*',
-        methods: ['GET', 'POST', 'DELETE', 'UPDATE', 'PUT', 'PATCH']
+        origin: [
+            'https://tu-panel-web.vercel.app',
+            'capacitor://localhost',
+            'http://localhost',
+            'https://localhost',
+        ],
+        methods: ['GET', 'POST', 'DELETE', 'PUT', 'PATCH'],
+        credentials: true,
     }));
     app.use('/api/v1', router);
     router.use('/product', productsRoutes);

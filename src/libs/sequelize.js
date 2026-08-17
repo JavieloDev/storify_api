@@ -1,42 +1,34 @@
-const {Sequelize} = require('sequelize');
-const {config} = require('../config/config');
+const { Sequelize } = require('sequelize');
+const { config } = require('../config/config');
 const setupModels = require('../db/models');
 
-const USER = encodeURIComponent(config.dbUser);
-const PASSWORD = encodeURIComponent(config.dbPassword);
-const URI = `postgresql://${USER}:${PASSWORD}@${config.dbHost}:${config.dbPort}/${config.dbName}`;
+let sequelizeUri;
+let sslConfig = false;
 
-const sequelize = new Sequelize(URI, {
+if (config.isProd) {
+    sequelizeUri = config.databaseUrl;
+    sslConfig = { require: true, rejectUnauthorized: false };
+} else {
+    const USER = encodeURIComponent(config.dbUser);
+    const PASSWORD = encodeURIComponent(config.dbPassword);
+    sequelizeUri = `postgresql://${USER}:${PASSWORD}@${config.dbHost}:${config.dbPort}/${config.dbName}`;
+}
+
+const sequelize = new Sequelize(sequelizeUri, {
     dialect: 'postgres',
-    logging: process.env.NODE_ENV === 'development' ? console.log : false, // Solo logs en desarrollo
+    logging: config.isProd ? false : console.log,
+    dialectOptions: sslConfig ? { ssl: sslConfig } : {},
     pool: {
-        max: 5,           // Máximo de conexiones en el pool
-        min: 0,           // Mínimo de conexiones en el pool
-        acquire: 30000,   // Tiempo máximo en ms que el pool intentará conectar antes de lanzar error
-        idle: 10000       // Tiempo máximo en ms que una conexión puede estar inactiva antes de ser liberada
-    },
-    dialectOptions: {
-        ssl: process.env.NODE_ENV === 'production' ? {
-            require: true,
-            rejectUnauthorized: false // Solo en desarrollo, en producción usar certificados válidos
-        } : false
+        max: config.isProd ? 3 : 5,
+        min: 0,
+        acquire: 30000,
+        idle: 10000,
     },
     define: {
-        timestamps: true,      // Agregar createdAt y updatedAt automáticamente
-        underscored: true,     // Usar snake_case en lugar de camelCase
-        underscoredAll: true
+        timestamps: true,
+        underscored: true,
+        underscoredAll: true,
     },
-    retry: {
-        max: 3,                // Número de reintentos en caso de error
-        match: [
-            /SequelizeConnectionError/,
-            /SequelizeConnectionRefusedError/,
-            /SequelizeHostNotFoundError/,
-            /SequelizeHostNotReachableError/,
-            /SequelizeInvalidConnectionError/,
-            /SequelizeConnectionTimedOutError/
-        ]
-    }
 });
 
 setupModels(sequelize);
