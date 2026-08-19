@@ -46,6 +46,14 @@ function routerApi(app) {
             'X-Requested-With'
         ],
     }));
+    app.use((req, res, next) => {
+        console.log('🌐 REQUEST');
+        console.log('Origin:', req.headers.origin);
+        console.log('Method:', req.method);
+        console.log('URL:', req.originalUrl);
+
+        next();
+    });
 
     app.use('/api/v1', router);
 
