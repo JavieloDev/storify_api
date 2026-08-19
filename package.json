@@ -35,7 +35,7 @@
     "mssql": "^11.0.1",
     "multer": "2.1.1",
     "nodemailer": "8.0.5",
-    "pg": "^8.8.0",
+    "pg": "^8.23.0",
     "pg-hstore": "^2.3.4",
     "point-in-big-polygon": "^2.0.1",
     "puppeteer-core": "^19.7.5",
