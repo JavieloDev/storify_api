@@ -17,7 +17,6 @@
   "description": "",
   "dependencies": {
     "@hapi/boom": "^10.0.0",
-    "@hubspot/api-client": "^10.0.0",
     "axios": "1.15.2",
     "body-parser": "2.2.1",
     "bull": "^4.10.4",
@@ -33,23 +32,17 @@
     "mathjs": "^11.4.0",
     "moment": "^2.29.4",
     "morgan": "^1.10.0",
-    "mssql": "^11.0.1",
     "multer": "2.1.1",
     "nodemailer": "8.0.5",
     "pg": "^8.23.0",
     "pg-hstore": "^2.3.4",
-    "point-in-big-polygon": "^2.0.1",
-    "puppeteer-core": "^19.7.5",
-    "robust-point-in-polygon": "^1.0.3",
     "sequelize": "6.37.8",
     "sharp": "^0.35.3",
-    "uuid": "^10.0.0",
-    "xml2js": "^0.6.2"
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
     "@faker-js/faker": "^7.6.0",
     "nodemon": "^2.0.20",
-    "sequelize-cli": "^6.6.1",
-    "typescript": "^5.9.2"
+    "sequelize-cli": "^6.6.1"
   }
 }
