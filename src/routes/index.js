@@ -14,29 +14,47 @@ const syncRouter = require('./sync.route');
 
 function routerApi(app) {
     const router = express.Router();
+
+    const allowedOrigins = [
+        'https://tu-panel-web.vercel.app',
+        'http://localhost:4200',
+        'http://127.0.0.1:4200',
+        'http://localhost:3000',
+        'capacitor://localhost',
+    ];
+
     app.use(cors({
-        origin: [
-            '*',
-            'https://tu-panel-web.vercel.app',
-            'capacitor://localhost',
-            'http://localhost',
-            'https://localhost',
-            'http://localhost:4200',  // ✅ Agregar Angular dev
-            'http://localhost:3000',  // ✅ Si usas otro puerto
-            'http://127.0.0.1:4200',  // ✅ Localhost con IP
-        ],
-        methods: ['GET', 'POST', 'DELETE', 'PUT', 'PATCH'],
+        origin: function (origin, callback) {
+            // Permite peticiones sin Origin, por ejemplo Postman/server-to-server
+            if (!origin) {
+                return callback(null, true);
+            }
+
+            if (allowedOrigins.includes(origin)) {
+                return callback(null, true);
+            }
+
+            return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+        },
         credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization',
+            'Accept',
+            'Origin',
+            'X-Requested-With'
+        ],
     }));
+
     app.use('/api/v1', router);
+
     router.use('/product', productsRoutes);
     router.use('/categories', categoriesRouter);
     router.use('/subcategories', subcategoriesRouter);
-
     router.use('/business', businessRouter);
     router.use('/order', orderRouter);
     router.use('/sales-report', salesReportRoute);
-
     router.use('/devices', deviceRouter);
     router.use('/sales-points', salesPointRouter);
     router.use('/sync', syncRouter);
