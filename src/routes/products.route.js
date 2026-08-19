@@ -9,15 +9,13 @@ router.get('/:businessId/products', async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {businessId} = req.params;
-        const {page = 1, limit = 10, filter = {}, not_paginated = false} = req.query;
-        console.log(not_paginated);
+        const {page = 1, limit = 10, filter = {}, not_paginated = false, since} = req.query;
 
-        const result = await service.findByBusiness(businessId, page, limit, filter, not_paginated);
+        const result = await service.findByBusiness(businessId, page, limit, filter, not_paginated, since);
+        result.serverTime = new Date().toISOString();
         res.json(result);
     } catch (error) {
         console.error('MENSAJE:', error.message);
-        console.error('ORIGINAL:', error.original?.message);
-        console.error('SQL:', error.sql);
         next(error);
     }
 });

@@ -15,14 +15,38 @@ class ProductService {
                       page = 1,
                       limit = 10,
                       filters = {},
-                      not_paginated = false
+                      not_paginated = false,
+                      since
                   } = {}) {
         const safeLimit = Math.min(Number(limit) || 10, 100);
         const currentPage = Number(page) || 1;
         const offset = (currentPage - 1) * safeLimit;
 
         const where = this._buildFilters(filters);
-        let totalPages = 0
+        if (since) {
+            where.updated_at = {[Op.gt]: new Date(since)};
+        }
+
+        // 🔧 nuevo: si es un pull incremental (viene `since`), ordenar por
+        // updated_at ASC para que la paginación avance de forma estable aunque
+        // se inserten/actualicen filas mientras se está paginando. Si no hay
+        // `since` (listado normal del admin), se mantiene created_at DESC.
+        const order = since ? [['updated_at', 'ASC']] : [['created_at', 'DESC']];
+
+        const include = [
+            {
+                model: this.sequelize.models.Subcategory,
+                as: 'subcategory',
+                required: false,
+                include: [
+                    {
+                        model: this.sequelize.models.Category,
+                        as: 'category',
+                        required: false,
+                    }
+                ],
+            }
+        ];
 
         if (!not_paginated) {
             const [total, rows] = await Promise.all([
@@ -31,61 +55,29 @@ class ProductService {
                     where,
                     limit: safeLimit,
                     offset,
-                    order: [['created_at', 'DESC']],
-                    include: [
-                        {
-                            model: this.sequelize.models.Subcategory,
-                            as: 'subcategory',
-                            required: false,
-                            include: [
-                                {
-                                    model: this.sequelize.models.Category,
-                                    as: 'category',
-                                    required: false,
-                                }
-                            ],
-                        }
-                    ],
+                    order, // 🔧 antes: hardcodeado a created_at DESC siempre
+                    include,
                     raw: true,
                     nest: true,
                 })
             ]);
-            totalPages = Math.ceil(total / safeLimit);
+            const totalPages = Math.ceil(total / safeLimit);
 
             return {
                 status: 'success',
                 code: 200,
                 message: 'Productos obtenidos correctamente',
                 data: rows,
-                pagination: {
-                    page: currentPage,
-                    limit: safeLimit,
-                    total,
-                    total_pages: totalPages
-                }
+                pagination: {page: currentPage, limit: safeLimit, total, total_pages: totalPages}
             };
         } else {
-            const rows = await Promise.all([
-                this.model.findAll({
-                    order: [['created_at', 'DESC']],
-                    include: [
-                        {
-                            model: this.sequelize.models.Subcategory,
-                            as: 'subcategory',
-                            required: false,
-                            include: [
-                                {
-                                    model: this.sequelize.models.Category,
-                                    as: 'category',
-                                    required: false,
-                                }
-                            ],
-                        }
-                    ],
-                    raw: true,
-                    nest: true,
-                })
-            ]);
+            const rows = await this.model.findAll({
+                where,
+                order, // 🔧 antes: hardcodeado a created_at DESC siempre
+                include,
+                raw: true,
+                nest: true,
+            });
 
             return {
                 status: 'success',
@@ -96,7 +88,6 @@ class ProductService {
         }
     }
 
-    // ✅ FIX: ahora recibe 'file' y lo agrega a 'data' antes de crear
     async create(data, file) {
         if (data.business_id) {
             const business = await this.sequelize.models.Business.findByPk(data.business_id, {
@@ -123,7 +114,6 @@ class ProductService {
             }
         }
 
-        // ✅ Si se subió un archivo, guardamos la ruta relativa en 'image'
         if (file) {
             data.image = `/uploads/${file.filename}`;
         }
@@ -131,7 +121,6 @@ class ProductService {
         return this.model.create(data);
     }
 
-    // ✅ FIX: ahora recibe 'file' y lo agrega a 'data' antes de actualizar
     async update(id, data, file) {
         const record = await this.model.findByPk(id);
         if (!record) {
@@ -162,7 +151,6 @@ class ProductService {
             }
         }
 
-        // ✅ Si se subió un archivo nuevo, actualizamos la ruta y borramos la imagen anterior
         if (file) {
             const oldImage = record.image;
             data.image = `/uploads/${file.filename}`;
@@ -182,9 +170,7 @@ class ProductService {
         return await record.update(data);
     }
 
-    // product.service.js
     async delete(id) {
-        // Solo necesitamos el campo 'image', no el registro completo con sus includes
         const record = await this.model.findByPk(id, {attributes: ['id', 'image']});
         if (!record) {
             throw new Error('Producto no encontrado');
@@ -195,7 +181,6 @@ class ProductService {
             throw new Error('Producto no encontrado');
         }
 
-        // Borrar la imagen del disco después de confirmar el delete en DB
         if (record.image) {
             const path = require('path');
             const fsp = require('fs/promises');
@@ -251,12 +236,15 @@ class ProductService {
         });
     }
 
-    async findByBusiness(businessId, page = 1, limit = 10, filters = {}, not_paginated) {
+    // 🔧 antes: firma no tenía `since`, así que el que le pasaban las rutas
+    // (5to argumento posicional) caía afuera silenciosamente
+    async findByBusiness(businessId, page = 1, limit = 10, filters = {}, not_paginated, since) {
         return this.findAll({
             page,
             limit,
             filters: {...filters, business_id: businessId},
-            not_paginated
+            not_paginated,
+            since
         });
     }
 
@@ -266,23 +254,18 @@ class ProductService {
         if (filters.name) {
             where.name = {[Op.like]: `%${filters.name}%`};
         }
-
         if (filters.business_id) {
             where.business_id = filters.business_id;
         }
-
         if (filters.subcategory_id) {
             where.subcategory_id = filters.subcategory_id;
         }
-
         if (filters.brand) {
             where.brand = {[Op.like]: `%${filters.brand}%`};
         }
-
         if (filters.price_min) {
             where.price = {[Op.gte]: Number(filters.price_min)};
         }
-
         if (filters.price_max) {
             if (where.price) {
                 where.price[Op.lte] = Number(filters.price_max);
@@ -290,11 +273,9 @@ class ProductService {
                 where.price = {[Op.lte]: Number(filters.price_max)};
             }
         }
-
         if (filters.quantity_min) {
             where.quantity = {[Op.gte]: Number(filters.quantity_min)};
         }
-
         if (filters.has_discount !== undefined) {
             if (filters.has_discount === true || filters.has_discount === 'true') {
                 where.discount = {[Op.gt]: 0};
@@ -302,15 +283,12 @@ class ProductService {
                 where.discount = 0;
             }
         }
-
         if (filters.color) {
             where.colors = {[Op.like]: `%${filters.color}%`};
         }
-
         if (filters.is_active !== undefined && filters.is_active !== null) {
             where.is_active = filters.is_active === true || filters.is_active === 'true';
         }
-
         if (filters.ids && Array.isArray(filters.ids) && filters.ids.length > 0) {
             where.id = {[Op.in]: filters.ids};
         }

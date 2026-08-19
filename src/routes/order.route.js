@@ -10,9 +10,10 @@ router.get('/:businessId/orders', async (req, res, next) => {
     try {
         const service = getService(req, 'ORDER');
         const {businessId} = req.params;
-        const {page = 1, limit = 10, filter = {}} = req.query;
+        const {page = 1, limit = 10, filter = {}, since} = req.query;
 
-        const result = await service.findByBusiness(businessId, page, limit, filter);
+        const result = await service.findByBusiness(businessId, page, limit, filter, since);
+        result.serverTime = new Date().toISOString();
         res.json(result);
     } catch (error) {
         next(error);

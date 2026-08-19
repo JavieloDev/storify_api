@@ -33,16 +33,10 @@ class OrderService {
         ];
     }
 
-    /**
-     * Obtener el próximo número de orden para un negocio
-     */
     async getNextOrderNumber(businessId, transaction) {
         await this.sequelize.query(
             'SELECT pg_advisory_xact_lock(hashtext(:businessId))',
-            {
-                replacements: {businessId},
-                transaction,
-            }
+            {replacements: {businessId}, transaction}
         );
 
         const lastOrder = await this.model.findOne({
@@ -58,13 +52,21 @@ class OrderService {
     async findAll({
                       page = 1,
                       limit = 10,
-                      filters = {}
+                      filters = {},
+                      since
                   } = {}) {
         const safeLimit = Math.min(Number(limit) || 10, 100);
         const currentPage = Number(page) || 1;
         const offset = (currentPage - 1) * safeLimit;
 
         const where = this._buildFilters(filters);
+        if (since) {
+            where.updated_at = {[Op.gt]: new Date(since)};
+        }
+
+        // 🔧 nuevo: mismo criterio que en products — ASC por updated_at solo
+        // en pulls incrementales, DESC por created_at para listados normales.
+        const order = since ? [['updated_at', 'ASC']] : [['created_at', 'DESC']];
 
         const [total, rows] = await Promise.all([
             this.model.count({where}),
@@ -72,7 +74,7 @@ class OrderService {
                 where,
                 limit: safeLimit,
                 offset,
-                order: [['created_at', 'DESC']],
+                order, // 🔧 antes: hardcodeado a created_at DESC siempre
                 include: this._includeItems(),
             })
         ]);
@@ -84,22 +86,14 @@ class OrderService {
             code: 200,
             message: 'Órdenes obtenidas correctamente',
             data: rows,
-            pagination: {
-                page: currentPage,
-                limit: safeLimit,
-                total,
-                total_pages: totalPages
-            }
+            pagination: {page: currentPage, limit: safeLimit, total, total_pages: totalPages}
         };
     }
 
-    // data: {business_id, status, notes, customer_name, customer_phone, customer_email}
-    // items: [{product_id, quantity}]
     async create(data, items = []) {
         if (!Array.isArray(items) || items.length === 0) {
             throw new Error('La orden debe contener al menos un producto');
         }
-
         if (!data.business_id) {
             throw new Error('business_id es requerido');
         }
@@ -107,7 +101,6 @@ class OrderService {
         const business = await this.sequelize.models.Business.findByPk(data.business_id, {
             attributes: ['id', 'status']
         });
-
         if (!business) {
             throw new Error('El negocio especificado no existe');
         }
@@ -116,7 +109,6 @@ class OrderService {
         }
 
         return this.sequelize.transaction(async (t) => {
-            // Verificar productos
             const products = await this.sequelize.models.Product.findAll({
                 where: {id: {[Op.in]: items.map(i => i.product_id)}},
                 transaction: t
@@ -126,7 +118,6 @@ class OrderService {
                 throw new Error('Uno o más productos especificados no existen');
             }
 
-            // Calcular subtotal
             const productMap = new Map(products.map(p => [p.id, p]));
             let subtotal = 0;
 
@@ -147,11 +138,9 @@ class OrderService {
             const discountTotal = Number(data.discount_total) || 0;
             const total = subtotal - discountTotal;
 
-            // 🔥 GENERAR EL NÚMERO DE ORDEN AQUÍ
             const nextOrderNumber = await this.getNextOrderNumber(data.business_id, t);
             console.log(`📝 Generando número de orden para negocio ${data.business_id}: ${nextOrderNumber}`);
 
-            // Crear la orden con el order_number explícitamente
             const order = await this.model.create({
                 order_number: String(nextOrderNumber),
                 order_sequence: nextOrderNumber,
@@ -176,7 +165,6 @@ class OrderService {
         });
     }
 
-    // ... resto de métodos igual ...
     async update(id, data) {
         const existing = await this.model.findByPk(id);
         if (!existing) {
@@ -219,7 +207,6 @@ class OrderService {
         if (!record) {
             throw new Error('Orden no encontrada');
         }
-
         if (record.status === 'cancelled') {
             throw new Error('La orden ya se encuentra cancelada');
         }
@@ -236,11 +223,14 @@ class OrderService {
         return this.model.findByPk(id, {include: this._includeItems()});
     }
 
-    async findByBusiness(businessId, page = 1, limit = 10, filters = {}) {
+    // 🔧 antes: firma sin `since` → las rutas se lo pasaban como 5to argumento
+    // pero se perdía porque acá no existía el parámetro
+    async findByBusiness(businessId, page = 1, limit = 10, filters = {}, since) {
         return this.findAll({
             page,
             limit,
-            filters: {...filters, business_id: businessId}
+            filters: {...filters, business_id: businessId},
+            since
         });
     }
 
@@ -249,7 +239,6 @@ class OrderService {
         if (!validStatuses.includes(status)) {
             throw new Error('Estado de orden inválido');
         }
-
         if (status === 'cancelled') {
             throw new Error('Para cancelar una orden use el endpoint de cancelación e indique el motivo');
         }
@@ -269,29 +258,23 @@ class OrderService {
         if (filters.order_number) {
             where.order_number = Number(filters.order_number);
         }
-
         if (filters.business_id) {
             where.business_id = filters.business_id;
         }
-
         if (filters.status) {
             where.status = filters.status;
         }
-
         if (filters.customer_name) {
             where.customer_name = {[Op.like]: `%${filters.customer_name}%`};
         }
-
         if (filters.date_from || filters.date_to) {
             where.created_at = {};
             if (filters.date_from) where.created_at[Op.gte] = new Date(filters.date_from);
             if (filters.date_to) where.created_at[Op.lte] = new Date(filters.date_to);
         }
-
         if (filters.total_min) {
             where.total = {[Op.gte]: Number(filters.total_min)};
         }
-
         if (filters.total_max) {
             if (where.total) {
                 where.total[Op.lte] = Number(filters.total_max);
