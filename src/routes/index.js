@@ -16,10 +16,14 @@ function routerApi(app) {
     const router = express.Router();
     app.use(cors({
         origin: [
+            '*',
             'https://tu-panel-web.vercel.app',
             'capacitor://localhost',
             'http://localhost',
             'https://localhost',
+            'http://localhost:4200',  // ✅ Agregar Angular dev
+            'http://localhost:3000',  // ✅ Si usas otro puerto
+            'http://127.0.0.1:4200',  // ✅ Localhost con IP
         ],
         methods: ['GET', 'POST', 'DELETE', 'PUT', 'PATCH'],
         credentials: true,
