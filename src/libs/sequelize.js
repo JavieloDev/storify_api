@@ -1,4 +1,5 @@
 const { Sequelize } = require('sequelize');
+const pg = require('pg');
 
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('PG VERSION:', require('pg/package.json').version);
@@ -37,6 +38,7 @@ if (isProduction) {
 
 const sequelize = new Sequelize(sequelizeUri, {
     dialect: 'postgres',
+    dialectModule: pg,
     logging: config.isProd ? false : console.log,
 
     dialectOptions,
