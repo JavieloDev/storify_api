@@ -4,7 +4,7 @@ const router = express.Router();
 
 const {sequelize} = require('../db/models');
 const BusinessService = require('../services/business.service');
-const {uploadImage} = require('../middlewares/upload.handler');
+const {uploadBusinessImage, safeDestroy} = require('../middlewares/upload.handler');
 const {getService} = require("../middlewares/headers");
 
 // TODO(auth): descomentar cuando se reactive la autenticación
@@ -135,7 +135,7 @@ router.get('/:id', /* authMiddleware, */ async (req, res, next) => {
 // CREAR
 // POST /business/create
 // ============================
-router.post('/create', /* authMiddleware, */ uploadImage, async (req, res, next) => {
+router.post('/create', /* authMiddleware, */ uploadBusinessImage, async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
         let businessData;
@@ -164,7 +164,8 @@ router.post('/create', /* authMiddleware, */ uploadImage, async (req, res, next)
         };
 
         if (req.file) {
-            payload.logo = `/uploads/${req.file.filename}`;
+            payload.logo = req.file.path;
+            payload.logo_public_id = req.file.publicId;
         }
         console.log(payload);
         const business = await service.create(payload /*, req.user.id */);
@@ -185,7 +186,7 @@ router.post('/create', /* authMiddleware, */ uploadImage, async (req, res, next)
 // ACTUALIZAR
 // PUT /businesses/:id
 // ============================
-router.put('/:id', /* authMiddleware, */ uploadImage, async (req, res, next) => {
+router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
         const {id} = req.params;
@@ -215,10 +216,16 @@ router.put('/:id', /* authMiddleware, */ uploadImage, async (req, res, next) => 
         };
 
         if (req.file) {
-            payload.logo = `/uploads/${req.file.filename}`;
+            payload.logo = req.file.path;
+            payload.logo_public_id = req.file.publicId;
         }
 
-        const updated = await service.update(id, payload /*, req.user.id */);
+        const updated = await service.update(id, payload);
+
+        // limpia el logo anterior solo si se subió uno nuevo
+        if (req.file && existing.logo_public_id) {
+            await safeDestroy(existing.logo_public_id);
+        }
 
         res.json({
             status: 'success', code: 200, message: 'Negocio actualizado correctamente', data: updated

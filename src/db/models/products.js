@@ -95,6 +95,12 @@ const ProductSchema = {
         allowNull: true,
     },
 
+    image_public_id: {
+        field: 'image_public_id',
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
+
     featured: {
         field: 'featured',
         type: DataTypes.BOOLEAN,

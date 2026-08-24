@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const {getService} = require('../middlewares/headers');
-const {uploadImage} = require('../middlewares/upload.handler');
+const {uploadImage,safeDestroy} = require('../middlewares/upload.handler');
 const path = require('path');
 const fs = require('fs');
 const parseFilterQuery = require('../middlewares/parse-filter');
+
 
 router.get('/:businessId/products',parseFilterQuery, async (req, res, next) => {
     try {
@@ -96,9 +97,7 @@ router.post('/create', uploadImage, async (req, res, next) => {
         });
     } catch (error) {
         console.error('❌ Error creando producto:', error);
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
+        if (req.file?.publicId) await safeDestroy(req.file.publicId);
         next(error);
     }
 });
@@ -165,9 +164,7 @@ router.put('/:id', uploadImage, async (req, res, next) => {
         });
     } catch (error) {
         console.error('Error actualizando producto:', error);
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
+        if (req.file?.publicId) await safeDestroy(req.file.publicId);
         next(error);
     }
 });

@@ -37,6 +37,13 @@ const BusinessSchema = {
         type: DataTypes.STRING(500),
         allowNull: true,
     },
+
+    logo_public_id: {
+        field: 'logo_public_id',
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
+
     banner: {
         field: 'banner',
         type: DataTypes.STRING(500),
