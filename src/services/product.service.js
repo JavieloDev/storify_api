@@ -116,6 +116,10 @@ class ProductService {
 
         if (file) {
             data.image = `/uploads/${file.filename}`;
+            // 🆕 mismo criterio que image: solo se setea si el thumbnail se generó
+            if (file.thumbnailFilename) {
+                data.thumbnail_url = `/uploads/${file.thumbnailFilename}`;
+            }
         }
 
         return this.model.create(data);
@@ -153,16 +157,32 @@ class ProductService {
 
         if (file) {
             const oldImage = record.image;
+            const oldThumbnail = record.thumbnail_url; // 🆕
+
             data.image = `/uploads/${file.filename}`;
+            if (file.thumbnailFilename) {
+                data.thumbnail_url = `/uploads/${file.thumbnailFilename}`;
+            }
+
+            const path = require('path');
+            const fsp = require('fs/promises');
 
             if (oldImage) {
-                const path = require('path');
-                const fsp = require('fs/promises');
                 const oldImagePath = path.join(__dirname, '..', '..', oldImage);
                 try {
                     await fsp.unlink(oldImagePath);
                 } catch {
                     // la imagen anterior ya no existe, no pasa nada
+                }
+            }
+
+            // 🆕 mismo criterio de limpieza para el thumbnail viejo
+            if (oldThumbnail) {
+                const oldThumbnailPath = path.join(__dirname, '..', '..', oldThumbnail);
+                try {
+                    await fsp.unlink(oldThumbnailPath);
+                } catch {
+                    // el thumbnail anterior ya no existe, no pasa nada
                 }
             }
         }
@@ -171,7 +191,8 @@ class ProductService {
     }
 
     async delete(id) {
-        const record = await this.model.findByPk(id, {attributes: ['id', 'image']});
+        // 🔧 antes: attributes: ['id', 'image']. Ahora también thumbnail_url.
+        const record = await this.model.findByPk(id, {attributes: ['id', 'image', 'thumbnail_url']});
         if (!record) {
             throw new Error('Producto no encontrado');
         }
@@ -181,14 +202,25 @@ class ProductService {
             throw new Error('Producto no encontrado');
         }
 
+        const path = require('path');
+        const fsp = require('fs/promises');
+
         if (record.image) {
-            const path = require('path');
-            const fsp = require('fs/promises');
             const imagePath = path.join(__dirname, '..', '..', record.image);
             try {
                 await fsp.unlink(imagePath);
             } catch {
                 // la imagen ya no existe o no se pudo borrar, no bloquea el flujo
+            }
+        }
+
+        // 🆕 mismo criterio para el thumbnail
+        if (record.thumbnail_url) {
+            const thumbnailPath = path.join(__dirname, '..', '..', record.thumbnail_url);
+            try {
+                await fsp.unlink(thumbnailPath);
+            } catch {
+                // el thumbnail ya no existe o no se pudo borrar, no bloquea el flujo
             }
         }
 

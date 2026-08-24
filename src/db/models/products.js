@@ -89,6 +89,12 @@ const ProductSchema = {
         allowNull: true,
     },
 
+    thumbnail_url: {
+        field: 'thumbnail_url',
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
+
     featured: {
         field: 'featured',
         type: DataTypes.BOOLEAN,
