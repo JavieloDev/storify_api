@@ -4,12 +4,13 @@ const {getService} = require('../middlewares/headers');
 const {uploadImage} = require('../middlewares/upload.handler');
 const path = require('path');
 const fs = require('fs');
+const parseFilterQuery = require('../middlewares/parse-filter');
 
-router.get('/:businessId/products', async (req, res, next) => {
+router.get('/:businessId/products',parseFilterQuery, async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {businessId} = req.params;
-        const {page = 1, limit = 10, filter = {}, not_paginated = false, since} = req.query;
+        const {page = 1, limit = 10,filter, not_paginated = false, since} = req.query;
 
         const result = await service.findByBusiness(businessId, page, limit, filter, not_paginated, since);
         result.serverTime = new Date().toISOString();

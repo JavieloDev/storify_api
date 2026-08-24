@@ -198,16 +198,18 @@
 const express = require('express');
 const router = express.Router();
 const { getService } = require('../middlewares/headers');
+const parseFilterQuery = require('../middlewares/parse-filter');
+
 
 // ============================
 // LISTAR CATEGORÍAS DE UN NEGOCIO
 // GET /:businessId/categories
 // ============================
-router.get('/:businessId/categories', async (req, res, next) => {
+router.get('/:businessId/categories', parseFilterQuery, async (req, res, next) => {
     try {
         const service = getService(req, 'CATEGORY');
         const { businessId } = req.params;
-        const { page = 1, limit = 10, filter = {}, since } = req.query;
+        const { page = 1, limit = 10, filter, since } = req.query;
 
         const result = await service.findByBusiness(businessId, page, limit, filter, since);
         result.serverTime = new Date().toISOString();
