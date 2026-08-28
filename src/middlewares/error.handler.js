@@ -1,21 +1,23 @@
 const boom = require('@hapi/boom');
 
 function uniqueErrorHandler(err, req, res, next) {
-    console.log(err.message)
     if (err.message === "Validation error") {
-        res.status(422).json(
-            {
-                Error: "Este nombre ya se usó en otro filtro, por favor use otro"
-            }
-        );
+        return res.status(422).json({
+            Error: "Este nombre ya se usó en otro filtro, por favor use otro"
+        });
     }
     next(err);
 }
 
 function errorHandler(err, req, res, next) {
-    res.status(500).json({
-        message: err.message,
-        stack: err.stack,
+    const status = err.status || 500;
+    const isProd = process.env.NODE_ENV === 'production';
+
+    res.status(status).json({
+        status: 'error',
+        code: status,
+        message: err.message || 'Error interno del servidor',
+        ...(isProd ? {} : { stack: err.stack }),
     });
 }
 

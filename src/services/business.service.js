@@ -12,37 +12,28 @@ class BusinessService {
         }
     }
 
-    async create(data /*, ownerId */) {
-        // TODO(auth): cuando se reactive auth, recibir ownerId y setearlo:
-        // data.owner_id = ownerId;
-
+    async create(data) {
         if (!data.name || data.name.trim().length < 2) {
-            const error = new Error('El nombre del negocio es obligatorio y debe tener al menos 2 caracteres.');
-            error.status = 400;
-            throw error;
+            throw boom.badRequest('El nombre del negocio es obligatorio y debe tener al menos 2 caracteres.');
         }
 
         data.name = data.name.trim();
-        data.slug = await this._generateUniqueSlug(data.name);
 
+        const nameTaken = await this._isNameTaken(data.name);
+        if (nameTaken) {
+            throw boom.conflict('Ya existe un negocio registrado con ese nombre.');
+        }
+
+        data.slug = await this._generateUniqueSlug(data.name);
         return this.model.create(data);
     }
 
-    async update(id, data /*, ownerId */) {
+    async update(id, data) {
         const record = await this.findById(id);
-
         if (!record) {
-            throw new Error('Negocio no encontrado');
+            throw boom.notFound('Negocio no encontrado');
         }
 
-        // TODO(auth): validar propiedad antes de permitir la actualización
-        // if (record.owner_id !== ownerId) {
-        //     const error = new Error('No tienes permiso para modificar este negocio.');
-        //     error.status = 403;
-        //     throw error;
-        // }
-
-        // Evita que se sobreescriban campos sensibles por esta vía
         delete data.owner_id;
         delete data.status;
         delete data.total_products;
@@ -50,10 +41,25 @@ class BusinessService {
         delete data.total_revenue;
 
         if (data.name) {
+            data.name = data.name.trim();
+
+            const nameTaken = await this._isNameTaken(data.name, id);
+            if (nameTaken) {
+                throw boom.conflict('Ya existe otro negocio registrado con ese nombre.');
+            }
+
             data.slug = await this._generateUniqueSlug(data.name, id);
         }
 
         return record.update(data);
+    }
+
+    async _isNameTaken(name, excludeId = null) {
+        const where = {name: {[Op.iLike]: name}};
+        if (excludeId) where.id = {[Op.ne]: excludeId};
+
+        const exists = await this.model.findOne({where, paranoid: false});
+        return !!exists;
     }
 
     async delete(id /*, ownerId */) {

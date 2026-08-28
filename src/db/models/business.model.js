@@ -20,6 +20,7 @@ const BusinessSchema = {
         field: 'name',
         type: DataTypes.STRING(150),
         allowNull: false,
+        unique: true,
     },
     slug: {
         field: 'slug',

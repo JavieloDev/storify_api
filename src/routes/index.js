@@ -10,6 +10,7 @@ const salesReportRoute = require('./sales-report.route');
 const deviceRouter = require('./device.route');
 const salesPointRouter = require('./sales-point.route');
 const syncRouter = require('./sync.route');
+const employeeRouter = require('./employee.route');
 
 
 function routerApi(app) {
@@ -68,6 +69,7 @@ function routerApi(app) {
     router.use('/devices', deviceRouter);
     router.use('/sales-points', salesPointRouter);
     router.use('/sync', syncRouter);
+    router.use('/employees', employeeRouter);
 }
 
 module.exports = routerApi

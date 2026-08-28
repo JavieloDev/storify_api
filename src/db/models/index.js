@@ -9,6 +9,7 @@ const {SalesPoint, SalesPointSchema} = require("./sales-point");
 const {SalesPointProduct, SalesPointProductSchema} = require("./sales-point-products");
 const {SalesPointUser, SalesPointUserSchema} = require("./sales-point-users");
 const {SalesPointDevice, SalesPointDeviceSchema} = require("./sales-point-device");
+const {Employee, EmployeeSchema} = require("./employee.model");
 
 function setupModels(sequelize) {
     Product.init(ProductSchema, Product.config(sequelize));
@@ -22,6 +23,7 @@ function setupModels(sequelize) {
     SalesPointProduct.init(SalesPointProductSchema, SalesPointProduct.config(sequelize));
     SalesPointUser.init(SalesPointUserSchema, SalesPointUser.config(sequelize));
     SalesPointDevice.init(SalesPointDeviceSchema, SalesPointDevice.config(sequelize));
+    Employee.init(EmployeeSchema, Employee.config(sequelize));
 
     Product.associate(sequelize.models);
     Category.associate(sequelize.models);
@@ -34,6 +36,7 @@ function setupModels(sequelize) {
     SalesPointProduct.associate(sequelize.models);
     SalesPointUser.associate(sequelize.models);
     SalesPointDevice.associate(sequelize.models);
+    Employee.associate(sequelize.models);
 }
 
 module.exports = setupModels;

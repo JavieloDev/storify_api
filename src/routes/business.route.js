@@ -25,6 +25,26 @@ router.post('/', /* authMiddleware, */ async (req, res, next) => {
     }
 });
 
+// GET /api/v1/business/lookup/:identifier
+router.get('/lookup/:identifier', async (req, res, next) => {
+    try {
+        const { identifier } = req.params;
+        const businessService = getService(req, 'BUSINESS');
+        const business = await businessService.findBySlug(identifier);
+
+        if (!business) {
+            return res.status(404).json({ status: 'error', code: 404, message: 'Negocio no encontrado' });
+        }
+        if (business.status !== 'active') {
+            return res.status(403).json({ status: 'error', code: 403, message: 'Negocio no activo' });
+        }
+
+        return res.status(200).json({ status: 'success', code: 200, data: business });
+    } catch (error) {
+        next(error);
+    }
+});
+
 // ============================
 // LISTAR NEGOCIOS ACTIVOS
 // GET /businesses/active

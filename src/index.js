@@ -3,6 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const routerApi = require('./routes/index.js');
 const {join} = require("node:path");
+const {boomErrorHandler, uniqueErrorHandler, errorHandler} = require("./middlewares/error.handler");
 
 const app = express();
 const port = process.env.PORT || 3008;
@@ -16,6 +17,10 @@ app.use('/uploads', express.static(join(__dirname, '../uploads')));
 console.log(port)
 // Rutas
 routerApi(app);
+
+app.use(boomErrorHandler);
+// app.use(uniqueErrorHandler);
+app.use(errorHandler);
 
 
 if (require.main === module) {
