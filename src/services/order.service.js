@@ -66,7 +66,9 @@ class OrderService {
 
         // 🔧 nuevo: mismo criterio que en products — ASC por updated_at solo
         // en pulls incrementales, DESC por created_at para listados normales.
-        const order = since ? [['updated_at', 'ASC']] : [['created_at', 'DESC']];
+        const order = since
+            ? [['updated_at', 'ASC'], ['id', 'ASC']]
+            : [['created_at', 'DESC'], ['id', 'DESC']];
 
         const [total, rows] = await Promise.all([
             this.model.count({where}),
