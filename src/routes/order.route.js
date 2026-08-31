@@ -166,4 +166,16 @@ router.patch('/:id/cancel', async (req, res, next) => {
     }
 });
 
+// PUT /api/v1/order/:id/items
+router.put('/:id/items', async (req, res) => {
+    try {
+        const service = getService(req, 'ORDER');
+        const {items, ...additionalData} = req.body;
+        const result = await service.updateItems(req.params.id, items, additionalData);
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({status: 'error', code: 400, message: error.message});
+    }
+});
+
 module.exports = router;

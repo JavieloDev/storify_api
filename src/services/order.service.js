@@ -279,6 +279,81 @@ class OrderService {
         return this._wrapSingle(record, 'Estado de la orden actualizado correctamente');
     }
 
+    async updateItems(id, items, additionalData = {}) {
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new Error('La orden debe contener al menos un producto');
+        }
+
+        const record = await this.model.findByPk(id);
+        if (!record) {
+            throw new Error('Orden no encontrada');
+        }
+
+        // 🆕 mismo criterio de "estados donde tiene sentido seguir
+        // agregando" que ya usa el frontend (isContinuableInCart /
+        // continuableInCartStatuses) — lo revalidamos acá porque el
+        // frontend puede estar desactualizado (otra pestaña cambió el
+        // estado mientras el usuario tenía el carrito abierto).
+        const editableStatuses = ['pending', 'confirmed', 'processing'];
+        if (!editableStatuses.includes(record.status)) {
+            throw new Error(`No se pueden modificar los productos de una orden en estado "${record.status}"`);
+        }
+
+        return this.sequelize.transaction(async (t) => {
+            const products = await this.sequelize.models.Product.findAll({
+                where: {id: {[Op.in]: items.map(i => i.product_id)}},
+                transaction: t,
+            });
+
+            if (products.length !== items.length) {
+                throw new Error('Uno o más productos especificados no existen');
+            }
+
+            const productMap = new Map(products.map(p => [p.id, p]));
+            let subtotal = 0;
+
+            const preparedItems = items.map((i) => {
+                const product = productMap.get(i.product_id);
+                const quantity = parseInt(i.quantity) || 1;
+                const unitPrice = Number(product.price);
+                const itemSubtotal = unitPrice * quantity;
+                subtotal += itemSubtotal;
+                return {
+                    order_id: id,
+                    product_id: i.product_id,
+                    quantity,
+                    unit_price: unitPrice,
+                    subtotal: itemSubtotal,
+                };
+            });
+
+            // 🆕 reemplazo total del set de items — ver nota arriba sobre
+            // por qué "replace" y no "merge".
+            await this.itemModel.destroy({where: {order_id: id}, transaction: t});
+            await this.itemModel.bulkCreate(preparedItems, {transaction: t});
+
+            // 🆕 recalcula subtotal/total SIEMPRE en base a los items reales
+            // que acaban de quedar persistidos, no en base a lo que mandó el
+            // cliente — el cliente no es fuente de verdad del precio.
+            const discountTotal = additionalData.discount_total !== undefined
+                ? Number(additionalData.discount_total)
+                : Number(record.discount_total);
+            const total = subtotal - discountTotal;
+
+            const patch = {subtotal, discount_total: discountTotal, total};
+            if (additionalData.notes !== undefined) patch.notes = additionalData.notes;
+            if (additionalData.customer_name !== undefined) patch.customer_name = additionalData.customer_name;
+            if (additionalData.customer_phone !== undefined) patch.customer_phone = additionalData.customer_phone;
+            if (additionalData.customer_email !== undefined) patch.customer_email = additionalData.customer_email;
+
+            await record.update(patch, {transaction: t});
+
+            const updated = await this.model.findByPk(id, {include: this._includeItems(), transaction: t});
+            // usa el mismo helper _wrapSingle del fix anterior
+            return this._wrapSingle(updated, 'Orden actualizada correctamente');
+        });
+    }
+
     _buildFilters(filters) {
         const where = {};
 
