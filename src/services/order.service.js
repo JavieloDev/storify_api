@@ -33,6 +33,16 @@ class OrderService {
         ];
     }
 
+    // 🆕 helper para no repetir el shape en cada método de un solo registro
+    _wrapSingle(data, message) {
+        return {
+            status: 'success',
+            code: 200,
+            message,
+            data,
+        };
+    }
+
     async getNextOrderNumber(businessId, transaction) {
         await this.sequelize.query(
             'SELECT pg_advisory_xact_lock(hashtext(:businessId))',
@@ -64,8 +74,6 @@ class OrderService {
             where.updated_at = {[Op.gt]: new Date(since)};
         }
 
-        // 🔧 nuevo: mismo criterio que en products — ASC por updated_at solo
-        // en pulls incrementales, DESC por created_at para listados normales.
         const order = since
             ? [['updated_at', 'ASC'], ['id', 'ASC']]
             : [['created_at', 'DESC'], ['id', 'DESC']];
@@ -76,7 +84,7 @@ class OrderService {
                 where,
                 limit: safeLimit,
                 offset,
-                order, // 🔧 antes: hardcodeado a created_at DESC siempre
+                order,
                 include: this._includeItems(),
             })
         ]);
@@ -110,7 +118,7 @@ class OrderService {
             throw new Error('El negocio especificado no está activo');
         }
 
-        return this.sequelize.transaction(async (t) => {
+        const createdOrder = await this.sequelize.transaction(async (t) => {
             const products = await this.sequelize.models.Product.findAll({
                 where: {id: {[Op.in]: items.map(i => i.product_id)}},
                 transaction: t
@@ -165,6 +173,10 @@ class OrderService {
                 transaction: t
             });
         });
+
+        // 🔧 antes: return this.sequelize.transaction(...) devolvía el
+        // modelo crudo directo, sin wrapper — inconsistente con findAll().
+        return this._wrapSingle(createdOrder, 'Orden creada correctamente');
     }
 
     async update(id, data) {
@@ -197,7 +209,9 @@ class OrderService {
 
         await existing.update(patch);
 
-        return this.model.findByPk(id, {include: this._includeItems()});
+        const updated = await this.model.findByPk(id, {include: this._includeItems()});
+        // 🔧 antes: devolvía el modelo crudo.
+        return this._wrapSingle(updated, 'Orden actualizada correctamente');
     }
 
     async cancel(id, reason) {
@@ -218,15 +232,25 @@ class OrderService {
             cancellation_reason: reason.trim()
         });
 
-        return this.model.findByPk(id, {include: this._includeItems()});
+        const cancelled = await this.model.findByPk(id, {include: this._includeItems()});
+        // 🔧 antes: devolvía el modelo crudo.
+        return this._wrapSingle(cancelled, 'Orden cancelada correctamente');
     }
 
     async findById(id) {
-        return this.model.findByPk(id, {include: this._includeItems()});
+        const order = await this.model.findByPk(id, {include: this._includeItems()});
+        // 🔧 FIX PRINCIPAL: antes devolvía `order` crudo (o null), sin
+        // envolver — a diferencia de findAll(), que sí envuelve en
+        // {status, code, data, message}. Esa asimetría hacía que el
+        // frontend (que espera Response<Order> con `.data`) recibiera la
+        // orden pelada y la tratara como "no encontrada" aunque sí había
+        // llegado. Ahora es consistente con el resto de los métodos.
+        if (!order) {
+            return this._wrapSingle(null, 'Orden no encontrada');
+        }
+        return this._wrapSingle(order, 'Orden obtenida correctamente');
     }
 
-    // 🔧 antes: firma sin `since` → las rutas se lo pasaban como 5to argumento
-    // pero se perdía porque acá no existía el parámetro
     async findByBusiness(businessId, page = 1, limit = 10, filters = {}, since) {
         return this.findAll({
             page,
@@ -251,7 +275,8 @@ class OrderService {
         }
 
         await record.update({status});
-        return record;
+        // 🔧 antes: devolvía el modelo crudo.
+        return this._wrapSingle(record, 'Estado de la orden actualizado correctamente');
     }
 
     _buildFilters(filters) {
