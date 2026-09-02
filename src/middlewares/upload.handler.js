@@ -12,53 +12,74 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
+const buildThumbnailUrl = (publicId) => cloudinary.url(publicId, {
+    width: 400,
+    height: 400,
+    crop: 'fill',
+    gravity: 'auto',
+    quality: 'auto',
+    fetch_format: 'auto',
+    secure: true,
+});
+
 /**
  * Crea un middleware de subida a Cloudinary para una carpeta específica.
  * No toca el disco local en ningún momento — funciona sin problema en
  * Vercel/serverless, donde el filesystem es de solo lectura.
  *
- * `transformation` acá es una transformación de ENTRADA: Cloudinary la
- * aplica ANTES de guardar el asset, así que lo que queda almacenado y lo
- * que sirve `secure_url` ya viene redimensionado y comprimido. Reemplaza
- * lo que antes hacía sharp localmente (optimizeImage/optimizeImageBalanced).
+ * `fields`: si se pasa (ej. ['logo', 'banner']), usa upload.fields() y
+ * cada fieldname puede tener su propia transformación de Cloudinary
+ * (el banner es panorámico, el logo es cuadrado). Si no se pasa, se
+ * comporta como antes: upload.single('image').
  */
-const createUploadMiddleware = (folder, {maxSize = 1600, quality = 'auto'} = {}) => {
+const createUploadMiddleware = (folder, {maxSize = 1600, quality = 'auto', fields} = {}) => {
     const storage = new CloudinaryStorage({
         cloudinary,
-        params: {
-            folder,
-            allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-            transformation: [
-                {width: maxSize, height: maxSize, crop: 'limit', quality, fetch_format: 'auto'}
-            ],
+        params: (req, file) => {
+            const isBanner = file.fieldname === 'banner';
+
+            return {
+                folder,
+                allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+                transformation: [
+                    isBanner
+                        ? {width: 1600, height: 500, crop: 'fill', gravity: 'auto', quality, fetch_format: 'auto'}
+                        : {width: maxSize, height: maxSize, crop: 'limit', quality, fetch_format: 'auto'}
+                ],
+            };
         },
     });
 
     const upload = multer({
         storage,
-        limits: {fileSize: 10 * 1024 * 1024, files: 1},
+        limits: {fileSize: 10 * 1024 * 1024, files: fields ? fields.length : 1},
         fileFilter,
     });
 
+    const runUpload = fields
+        ? upload.fields(fields.map((name) => ({name, maxCount: 1})))
+        : upload.single('image');
+
     return (req, res, next) => {
-        upload.single('image')(req, res, (err) => {
+        runUpload(req, res, (err) => {
             if (err) return next(err);
+
+            if (fields) {
+                req.files = req.files || {};
+                for (const name of fields) {
+                    const file = req.files[name]?.[0];
+                    if (!file) continue;
+                    // req.files[name][0].filename = public_id en Cloudinary
+                    // req.files[name][0].path     = secure_url ya optimizada
+                    file.publicId = file.filename;
+                    file.thumbnailUrl = buildThumbnailUrl(file.publicId);
+                }
+                return next();
+            }
+
             if (!req.file) return next();
-
-            // req.file.filename = public_id en Cloudinary (lo setea multer-storage-cloudinary)
-            // req.file.path     = secure_url ya optimizada
             req.file.publicId = req.file.filename;
-
-            req.file.thumbnailUrl = cloudinary.url(req.file.publicId, {
-                width: 400,
-                height: 400,
-                crop: 'fill',
-                gravity: 'auto',
-                quality: 'auto',
-                fetch_format: 'auto',
-                secure: true,
-            });
-
+            req.file.thumbnailUrl = buildThumbnailUrl(req.file.publicId);
             next();
         });
     };
@@ -76,6 +97,6 @@ const safeDestroy = async (publicId) => {
 
 module.exports = {
     uploadImage: createUploadMiddleware('storify/products'),
-    uploadBusinessImage: createUploadMiddleware('storify/businesses', {maxSize: 800}),
+    uploadBusinessImage: createUploadMiddleware('storify/businesses', {maxSize: 800, fields: ['logo', 'banner']}),
     safeDestroy,
 };

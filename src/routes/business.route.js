@@ -180,14 +180,21 @@ router.post('/create', /* authMiddleware, */ uploadBusinessImage, async (req, re
             social_links: businessData.social_links || {},
             settings: businessData.settings || {},
             plan: businessData.plan || 'free',
-            plan_expires_at: businessData.plan_expires_at || null, // status: 'pending', // Se establece por defecto en el modelo
+            plan_expires_at: businessData.plan_expires_at || null,
         };
 
-        if (req.file) {
-            payload.logo = req.file.path;
-            payload.logo_public_id = req.file.publicId;
+        const logoFile = req.files?.logo?.[0];
+        const bannerFile = req.files?.banner?.[0];
+
+        if (logoFile) {
+            payload.logo = logoFile.path;
+            payload.logo_public_id = logoFile.publicId;
         }
-        console.log(payload);
+        if (bannerFile) {
+            payload.banner = bannerFile.path;
+            payload.banner_public_id = bannerFile.publicId;
+        }
+
         const business = await service.create(payload /*, req.user.id */);
 
         res.status(201).json({
@@ -195,9 +202,6 @@ router.post('/create', /* authMiddleware, */ uploadBusinessImage, async (req, re
         });
     } catch (error) {
         console.error('Error creando negocio:', error);
-        console.error('MENSAJE:', error.message);
-        console.error('ORIGINAL:', error.original?.message); // el mensaje real de Postgres
-        console.error('SQL:', error.sql);
         next(error);
     }
 });
@@ -211,7 +215,6 @@ router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, n
         const service = getService(req, 'BUSINESS');
         const {id} = req.params;
 
-        // Verificar que existe
         const existing = await service.findById(id);
         if (!existing) {
             return res.status(404).json({
@@ -235,16 +238,26 @@ router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, n
             plan_expires_at: req.body.plan_expires_at,
         };
 
-        if (req.file) {
-            payload.logo = req.file.path;
-            payload.logo_public_id = req.file.publicId;
+        const logoFile = req.files?.logo?.[0];
+        const bannerFile = req.files?.banner?.[0];
+
+        if (logoFile) {
+            payload.logo = logoFile.path;
+            payload.logo_public_id = logoFile.publicId;
+        }
+        if (bannerFile) {
+            payload.banner = bannerFile.path;
+            payload.banner_public_id = bannerFile.publicId;
         }
 
         const updated = await service.update(id, payload);
 
-        // limpia el logo anterior solo si se subió uno nuevo
-        if (req.file && existing.logo_public_id) {
+        // limpia cada asset anterior solo si se subió uno nuevo del mismo tipo
+        if (logoFile && existing.logo_public_id) {
             await safeDestroy(existing.logo_public_id);
+        }
+        if (bannerFile && existing.banner_public_id) {
+            await safeDestroy(existing.banner_public_id);
         }
 
         res.json({
@@ -255,7 +268,6 @@ router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, n
         next(error);
     }
 });
-
 // ============================
 // SUSPENDER
 // PATCH /businesses/:id/suspend
