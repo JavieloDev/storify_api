@@ -23,7 +23,7 @@ function routerApi(app) {
         'http://localhost:3000',
         'capacitor://localhost',
         'https://localhost',
-        'http://localhost:10726'
+        'http://localhost:8299/'
     ];
 
     app.use(cors({
