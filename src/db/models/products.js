@@ -69,6 +69,13 @@ const ProductSchema = {
         defaultValue: 0,
     },
 
+    stock: {
+        field: 'stock',
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+    },
+
     stock_status: {
         field: 'stock_status',
         type: DataTypes.ENUM('in_stock', 'medium', 'low', 'critical', 'out'),
@@ -187,23 +194,31 @@ class Product extends Model {
                 beforeCreate: (product) => {
                     product.created_at = new Date();
                     product.updated_at = new Date();
+
+                    const stock = Number(product.stock) || 0;
                     if (!product.stock_status) {
-                        product.stock_status = product.quantity === 0 ? 'out' : 'in_stock';
+                        if (stock === 0) product.stock_status = 'out';
+                        else if (stock <= 2) product.stock_status = 'critical';
+                        else if (stock <= 5) product.stock_status = 'low';
+                        else if (stock <= 10) product.stock_status = 'medium';
+                        else product.stock_status = 'in_stock';
                     }
+
                     product.sales_price = Product.computeSalesPrice(
                         product.price, product.discount, product.profit_percentage
                     );
                 },
                 beforeUpdate: (product) => {
                     product.updated_at = new Date();
-                    if (product.changed('quantity')) {
-                        const qty = product.quantity;
-                        if (qty === 0) product.stock_status = 'out';
-                        else if (qty <= 2) product.stock_status = 'critical';
-                        else if (qty <= 5) product.stock_status = 'low';
-                        else if (qty <= 10) product.stock_status = 'medium';
+                    if (product.changed('stock')) {
+                        const stock = Number(product.stock) || 0;
+                        if (stock === 0) product.stock_status = 'out';
+                        else if (stock <= 2) product.stock_status = 'critical';
+                        else if (stock <= 5) product.stock_status = 'low';
+                        else if (stock <= 10) product.stock_status = 'medium';
                         else product.stock_status = 'in_stock';
                     }
+
                     if (product.changed('price') || product.changed('discount') || product.changed('profit_percentage')) {
                         product.sales_price = Product.computeSalesPrice(
                             product.price, product.discount, product.profit_percentage

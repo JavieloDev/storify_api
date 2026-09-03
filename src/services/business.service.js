@@ -1,5 +1,18 @@
-// src/services/business.service.js
 const {Op} = require('sequelize');
+const boom = require('@hapi/boom');
+const {safeDestroy} = require('../middlewares/upload.handler');
+
+function rejectInlineMedia(data) {
+    const next = {...data};
+    const keys = ['logo', 'banner', 'logo_public_id', 'banner_public_id'];
+    for (const key of keys) {
+        const value = next[key];
+        if (typeof value === 'string' && (value.startsWith('data:') || value.length > 2048)) {
+            delete next[key];
+        }
+    }
+    return next;
+}
 
 class BusinessService {
     constructor(sequelizeInstance) {
@@ -13,11 +26,15 @@ class BusinessService {
     }
 
     async create(data) {
-        if (!data.name || data.name.trim().length < 2) {
+        data = rejectInlineMedia({...data});
+
+        const name = data?.name?.trim();
+
+        if (!name || name.length < 2) {
             throw boom.badRequest('El nombre del negocio es obligatorio y debe tener al menos 2 caracteres.');
         }
 
-        data.name = data.name.trim();
+        data.name = name;
 
         const nameTaken = await this._isNameTaken(data.name);
         if (nameTaken) {
@@ -29,6 +46,8 @@ class BusinessService {
     }
 
     async update(id, data) {
+        data = rejectInlineMedia({...data});
+
         const record = await this.findById(id);
         if (!record) {
             throw boom.notFound('Negocio no encontrado');
@@ -62,27 +81,30 @@ class BusinessService {
         return !!exists;
     }
 
-    async delete(id /*, ownerId */) {
+    async delete(id) {
         const record = await this.findById(id);
 
         if (!record) {
             return {
                 status: 'error',
                 code: 404,
-                message: 'Negocio no encontrado'
+                message: 'Negocio no encontrado',
             };
         }
 
-        // TODO(auth): validar propiedad antes de permitir eliminar
-        // if (record.owner_id !== ownerId) { ... }
+        const logoPublicId = record.logo_public_id;
+        const bannerPublicId = record.banner_public_id;
 
-        await record.destroy(); // soft delete (paranoid: true en el modelo)
+        await record.destroy();
+
+        await safeDestroy(logoPublicId);
+        await safeDestroy(bannerPublicId);
 
         return {
             status: 'success',
             code: 200,
             message: 'Negocio eliminado correctamente',
-            data: []
+            data: [],
         };
     }
 
@@ -99,9 +121,8 @@ class BusinessService {
                       limit = 10,
                       where = {},
                       orderBy = 'created_at',
-                      orderDirection = 'DESC'
+                      orderDirection = 'DESC',
                   } = {}) {
-
         const safeLimit = Math.min(Number(limit) || 10, 100);
         const currentPage = Number(page) || 1;
         const offset = (currentPage - 1) * safeLimit;
@@ -115,25 +136,23 @@ class BusinessService {
                 limit: safeLimit,
                 offset,
                 order: [[orderBy, orderDirection]],
-                raw: true
-            })
+                raw: true,
+            }),
         ]);
 
-        // Conteo de productos por negocio (solo para los negocios de esta página)
-        const businessIds = rows.map(r => r.id);
+        const businessIds = rows.map((r) => r.id);
         let productCounts = [];
-
         const ProductModel = this.sequelize.models.Product;
 
         if (businessIds.length && ProductModel) {
             productCounts = await ProductModel.findAll({
                 attributes: [
                     'business_id',
-                    [this.sequelize.fn('COUNT', this.sequelize.col('id')), 'total_products']
+                    [this.sequelize.fn('COUNT', this.sequelize.col('id')), 'total_products'],
                 ],
                 where: {business_id: businessIds},
                 group: ['business_id'],
-                raw: true
+                raw: true,
             });
         }
 
@@ -142,11 +161,11 @@ class BusinessService {
             return acc;
         }, {});
 
-        const rowsWithSummary = rows.map(row => ({
+        const rowsWithSummary = rows.map((row) => ({
             ...row,
             summary: {
-                total_products: countMap[row.id] || 0
-            }
+                total_products: countMap[row.id] || 0,
+            },
         }));
 
         const totalPages = Math.ceil(total / safeLimit);
@@ -160,8 +179,8 @@ class BusinessService {
                 page: currentPage,
                 limit: safeLimit,
                 total,
-                total_pages: totalPages
-            }
+                total_pages: totalPages,
+            },
         };
     }
 
@@ -169,38 +188,25 @@ class BusinessService {
         return this.findAll({
             page,
             limit,
-            filters: {status: 'active'},
+            where: {status: 'active'},
             orderBy: 'created_at',
-            orderDirection: 'DESC'
+            orderDirection: 'DESC',
         });
     }
 
-    // TODO(auth): cuando se reactive auth, reemplazar por findAll({ filters: { owner_id: ownerId } })
-    // async findByOwner(ownerId, page = 1, limit = 10) {
-    //     return this.findAll({page, limit, filters: {owner_id: ownerId}});
-    // }
-
-    async suspend(id, reason /*, ownerId */) {
+    async suspend(id, reason) {
         const record = await this.findById(id);
-
         if (!record) {
             throw new Error('Negocio no encontrado');
         }
-
-        // TODO(auth): validar propiedad antes de permitir suspender
-
         return record.update({status: 'suspended', suspension_reason: reason || null});
     }
 
-    async reactivate(id /*, ownerId */) {
+    async reactivate(id) {
         const record = await this.findById(id);
-
         if (!record) {
             throw new Error('Negocio no encontrado');
         }
-
-        // TODO(auth): validar propiedad antes de permitir reactivar
-
         return record.update({status: 'active', suspension_reason: null});
     }
 
@@ -210,20 +216,12 @@ class BusinessService {
         if (filters.name) {
             where.name = {[Op.like]: `%${filters.name}%`};
         }
-
         if (filters.category) {
             where.category = filters.category;
         }
-
         if (filters.status) {
             where.status = filters.status;
         }
-
-        // TODO(auth): filtrar por dueño cuando se reactive auth
-        // if (filters.owner_id) {
-        //     where.owner_id = filters.owner_id;
-        // }
-
         if (filters.ids && Array.isArray(filters.ids) && filters.ids.length > 0) {
             where.id = {[Op.in]: filters.ids};
         }
@@ -232,9 +230,7 @@ class BusinessService {
     }
 
     async getStats() {
-        // 1 sola query agrupando por 'status' en vez de N queries secuenciales
         const grouped = await this.model.count({group: ['status']});
-
         const stats = {total: 0, active: 0, inactive: 0, pending: 0, suspended: 0};
 
         grouped.forEach(({status, count}) => {
@@ -250,28 +246,22 @@ class BusinessService {
     async searchByName(query, limit = 10) {
         const where = {
             name: {[Op.like]: `%${query}%`},
-            status: 'active'
+            status: 'active',
         };
 
-        // raw:true evita la hidratación de instancias, ya que solo se devuelve JSON plano
-        const rows = await this.model.findAll({
+        return this.model.findAll({
             where,
             limit: Math.min(limit, 50),
             order: [['name', 'ASC']],
-            raw: true
+            raw: true,
         });
-
-        return rows;
     }
 
-    /**
-     * Convierte "Mi Negocio Genial!" -> "mi-negocio-genial"
-     */
     _slugify(text) {
         return text
             .toString()
             .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '') // quita tildes
+            .replace(/[\u0300-\u036f]/g, '')
             .toLowerCase()
             .trim()
             .replace(/[^a-z0-9\s-]/g, '')
@@ -279,17 +269,11 @@ class BusinessService {
             .replace(/-+/g, '-');
     }
 
-    /**
-     * Genera un slug único agregando un sufijo numérico si ya existe.
-     * paranoid:false para no reciclar el slug de un negocio borrado
-     * (soft delete) que aún podría restaurarse.
-     */
     async _generateUniqueSlug(name, excludeId = null) {
         const base = this._slugify(name) || 'negocio';
         let slug = base;
         let counter = 1;
 
-        // eslint-disable-next-line no-constant-condition
         while (true) {
             const where = {slug};
             if (excludeId) where.id = {[Op.ne]: excludeId};

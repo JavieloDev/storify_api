@@ -1,19 +1,51 @@
-// src/routes/business.routes.js
 const express = require('express');
 const router = express.Router();
 
-const {sequelize} = require('../db/models');
-const BusinessService = require('../services/business.service');
 const {uploadBusinessImage, safeDestroy} = require('../middlewares/upload.handler');
-const {getService} = require("../middlewares/headers");
+const {getService} = require('../middlewares/headers');
 
 // TODO(auth): descomentar cuando se reactive la autenticación
 // const authMiddleware = require('../middlewares/auth.handler');
 
-// ============================
-// LISTAR (paginado + filtros)
-// POST /businesses
-// ============================
+const stripClientMedia = (businessData = {}) => {
+    const data = {...businessData};
+    delete data.logo;
+    delete data.banner;
+    delete data.logo_public_id;
+    delete data.banner_public_id;
+    delete data.local_logo_path;
+    delete data.local_banner_path;
+    return data;
+};
+
+const parseBusinessBody = (req) => {
+    const raw = req.body.business ? JSON.parse(req.body.business) : req.body;
+    return stripClientMedia(raw);
+};
+
+const destroyUploadedBusinessFiles = async (req) => {
+    const logoFile = req.files?.logo?.[0];
+    const bannerFile = req.files?.banner?.[0];
+    if (logoFile?.publicId) await safeDestroy(logoFile.publicId);
+    if (bannerFile?.publicId) await safeDestroy(bannerFile.publicId);
+};
+
+const applyUploadedImages = (payload, req) => {
+    const logoFile = req.files?.logo?.[0];
+    const bannerFile = req.files?.banner?.[0];
+
+    if (logoFile) {
+        payload.logo = logoFile.path;
+        payload.logo_public_id = logoFile.publicId;
+    }
+    if (bannerFile) {
+        payload.banner = bannerFile.path;
+        payload.banner_public_id = bannerFile.publicId;
+    }
+
+    return {logoFile, bannerFile};
+};
+
 router.post('/', /* authMiddleware, */ async (req, res, next) => {
     try {
         const {page = 1, limit = 10, where = {}} = req.body;
@@ -25,30 +57,25 @@ router.post('/', /* authMiddleware, */ async (req, res, next) => {
     }
 });
 
-// GET /api/v1/business/lookup/:identifier
 router.get('/lookup/:identifier', async (req, res, next) => {
     try {
-        const { identifier } = req.params;
+        const {identifier} = req.params;
         const businessService = getService(req, 'BUSINESS');
         const business = await businessService.findBySlug(identifier);
 
         if (!business) {
-            return res.status(404).json({ status: 'error', code: 404, message: 'Negocio no encontrado' });
+            return res.status(404).json({status: 'error', code: 404, message: 'Negocio no encontrado'});
         }
         if (business.status !== 'active') {
-            return res.status(403).json({ status: 'error', code: 403, message: 'Negocio no activo' });
+            return res.status(403).json({status: 'error', code: 403, message: 'Negocio no activo'});
         }
 
-        return res.status(200).json({ status: 'success', code: 200, data: business });
+        return res.status(200).json({status: 'success', code: 200, data: business});
     } catch (error) {
         next(error);
     }
 });
 
-// ============================
-// LISTAR NEGOCIOS ACTIVOS
-// GET /businesses/active
-// ============================
 router.get('/active', async (req, res, next) => {
     try {
         const {page = 1, limit = 10} = req.query;
@@ -60,33 +87,30 @@ router.get('/active', async (req, res, next) => {
     }
 });
 
-// ============================
-// ESTADÍSTICAS
-// GET /businesses/stats
-// ============================
 router.get('/stats', async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
         const stats = await service.getStats();
         res.json({
-            status: 'success', code: 200, message: 'Estadísticas obtenidas correctamente', data: stats
+            status: 'success',
+            code: 200,
+            message: 'Estadísticas obtenidas correctamente',
+            data: stats,
         });
     } catch (error) {
         next(error);
     }
 });
 
-// ============================
-// BUSCAR POR NOMBRE
-// GET /businesses/search?q=nombre&limit=10
-// ============================
 router.get('/search', async (req, res, next) => {
     try {
         const {q, limit = 10} = req.query;
 
         if (!q) {
             return res.status(400).json({
-                status: 'error', code: 400, message: 'El parámetro "q" es obligatorio.'
+                status: 'error',
+                code: 400,
+                message: 'El parámetro "q" es obligatorio.',
             });
         }
 
@@ -94,17 +118,16 @@ router.get('/search', async (req, res, next) => {
         const rows = await service.searchByName(q, Number(limit));
 
         res.json({
-            status: 'success', code: 200, message: 'Resultados obtenidos correctamente', data: rows
+            status: 'success',
+            code: 200,
+            message: 'Resultados obtenidos correctamente',
+            data: rows,
         });
     } catch (error) {
         next(error);
     }
 });
 
-// ============================
-// OBTENER NEGOCIO PÚBLICO POR SLUG
-// GET /businesses/public/:slug
-// ============================
 router.get('/public/:slug', async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
@@ -112,22 +135,23 @@ router.get('/public/:slug', async (req, res, next) => {
 
         if (!business || business.status !== 'active') {
             return res.status(404).json({
-                status: 'error', code: 404, message: 'Negocio no disponible.'
+                status: 'error',
+                code: 404,
+                message: 'Negocio no disponible.',
             });
         }
 
         res.json({
-            status: 'success', code: 200, message: 'Negocio obtenido correctamente', data: business
+            status: 'success',
+            code: 200,
+            message: 'Negocio obtenido correctamente',
+            data: business,
         });
     } catch (error) {
         next(error);
     }
 });
 
-// ============================
-// OBTENER POR ID
-// GET /businesses/:id
-// ============================
 router.get('/:id', /* authMiddleware, */ async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
@@ -137,33 +161,27 @@ router.get('/:id', /* authMiddleware, */ async (req, res, next) => {
 
         if (!business) {
             return res.status(404).json({
-                status: 'error', code: 404, message: 'Negocio no encontrado.'
+                status: 'error',
+                code: 404,
+                message: 'Negocio no encontrado.',
             });
         }
 
-        // TODO(auth): validar que business.owner_id === req.user.id
-
         res.json({
-            status: 'success', code: 200, message: 'Negocio obtenido correctamente', data: business
+            status: 'success',
+            code: 200,
+            message: 'Negocio obtenido correctamente',
+            data: business,
         });
     } catch (error) {
         next(error);
     }
 });
 
-// ============================
-// CREAR
-// POST /business/create
-// ============================
 router.post('/create', /* authMiddleware, */ uploadBusinessImage, async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
-        let businessData;
-        if (req.body.business) {
-            businessData = JSON.parse(req.body.business);
-        } else {
-            businessData = req.body;
-        }
+        const businessData = parseBusinessBody(req);
 
         const payload = {
             name: businessData.name,
@@ -183,33 +201,23 @@ router.post('/create', /* authMiddleware, */ uploadBusinessImage, async (req, re
             plan_expires_at: businessData.plan_expires_at || null,
         };
 
-        const logoFile = req.files?.logo?.[0];
-        const bannerFile = req.files?.banner?.[0];
+        applyUploadedImages(payload, req);
 
-        if (logoFile) {
-            payload.logo = logoFile.path;
-            payload.logo_public_id = logoFile.publicId;
-        }
-        if (bannerFile) {
-            payload.banner = bannerFile.path;
-            payload.banner_public_id = bannerFile.publicId;
-        }
-
-        const business = await service.create(payload /*, req.user.id */);
+        const business = await service.create(payload);
 
         res.status(201).json({
-            status: 'success', code: 201, message: 'Negocio creado correctamente', data: business
+            status: 'success',
+            code: 201,
+            message: 'Negocio creado correctamente',
+            data: business,
         });
     } catch (error) {
         console.error('Error creando negocio:', error);
+        await destroyUploadedBusinessFiles(req);
         next(error);
     }
 });
 
-// ============================
-// ACTUALIZAR
-// PUT /businesses/:id
-// ============================
 router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
@@ -217,42 +225,36 @@ router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, n
 
         const existing = await service.findById(id);
         if (!existing) {
+            await destroyUploadedBusinessFiles(req);
             return res.status(404).json({
-                status: 'error', code: 404, message: 'Negocio no encontrado'
+                status: 'error',
+                code: 404,
+                message: 'Negocio no encontrado',
             });
         }
 
+        const businessData = parseBusinessBody(req);
+
         const payload = {
-            name: req.body.name,
-            description: req.body.description,
-            category: req.body.category,
-            tags: req.body.tags,
-            email: req.body.email,
-            phone: req.body.phone,
-            address: req.body.address,
-            currency: req.body.currency,
-            timezone: req.body.timezone,
-            social_links: req.body.social_links,
-            settings: req.body.settings,
-            plan: req.body.plan,
-            plan_expires_at: req.body.plan_expires_at,
+            name: businessData.name,
+            description: businessData.description,
+            category: businessData.category,
+            tags: businessData.tags,
+            email: businessData.email,
+            phone: businessData.phone,
+            address: businessData.address,
+            currency: businessData.currency,
+            timezone: businessData.timezone,
+            social_links: businessData.social_links,
+            settings: businessData.settings,
+            plan: businessData.plan,
+            plan_expires_at: businessData.plan_expires_at,
         };
 
-        const logoFile = req.files?.logo?.[0];
-        const bannerFile = req.files?.banner?.[0];
-
-        if (logoFile) {
-            payload.logo = logoFile.path;
-            payload.logo_public_id = logoFile.publicId;
-        }
-        if (bannerFile) {
-            payload.banner = bannerFile.path;
-            payload.banner_public_id = bannerFile.publicId;
-        }
+        const {logoFile, bannerFile} = applyUploadedImages(payload, req);
 
         const updated = await service.update(id, payload);
 
-        // limpia cada asset anterior solo si se subió uno nuevo del mismo tipo
         if (logoFile && existing.logo_public_id) {
             await safeDestroy(existing.logo_public_id);
         }
@@ -261,27 +263,31 @@ router.put('/:id', /* authMiddleware, */ uploadBusinessImage, async (req, res, n
         }
 
         res.json({
-            status: 'success', code: 200, message: 'Negocio actualizado correctamente', data: updated
+            status: 'success',
+            code: 200,
+            message: 'Negocio actualizado correctamente',
+            data: updated,
         });
     } catch (error) {
         console.error('Error actualizando negocio:', error);
+        await destroyUploadedBusinessFiles(req);
         next(error);
     }
 });
-// ============================
-// SUSPENDER
-// PATCH /businesses/:id/suspend
-// ============================
+
 router.patch('/:id/suspend', /* authMiddleware, */ async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
         const {id} = req.params;
         const {reason} = req.body;
 
-        const business = await service.suspend(id, reason /*, req.user.id */);
+        const business = await service.suspend(id, reason);
 
         res.json({
-            status: 'success', code: 200, message: 'Negocio suspendido correctamente', data: business
+            status: 'success',
+            code: 200,
+            message: 'Negocio suspendido correctamente',
+            data: business,
         });
     } catch (error) {
         console.error('Error suspendiendo negocio:', error);
@@ -289,19 +295,18 @@ router.patch('/:id/suspend', /* authMiddleware, */ async (req, res, next) => {
     }
 });
 
-// ============================
-// REACTIVAR
-// PATCH /businesses/:id/reactivate
-// ============================
 router.patch('/:id/reactivate', /* authMiddleware, */ async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
         const {id} = req.params;
 
-        const business = await service.reactivate(id /*, req.user.id */);
+        const business = await service.reactivate(id);
 
         res.json({
-            status: 'success', code: 200, message: 'Negocio reactivado correctamente', data: business
+            status: 'success',
+            code: 200,
+            message: 'Negocio reactivado correctamente',
+            data: business,
         });
     } catch (error) {
         console.error('Error reactivando negocio:', error);
@@ -309,22 +314,19 @@ router.patch('/:id/reactivate', /* authMiddleware, */ async (req, res, next) => 
     }
 });
 
-// ============================
-// ELIMINAR (soft delete)
-// DELETE /businesses/:id
-// ============================
 router.delete('/:id', /* authMiddleware, */ async (req, res, next) => {
     try {
         const service = getService(req, 'BUSINESS');
         const {id} = req.params;
-
-        const result = await service.delete(id /*, req.user.id */);
-
+        const result = await service.delete(id);
         return res.status(result.code).json(result);
     } catch (error) {
         console.error('Error eliminando negocio:', error);
         return res.status(500).json({
-            status: 'error', code: 500, message: 'Error interno del servidor', data: null
+            status: 'error',
+            code: 500,
+            message: 'Error interno del servidor',
+            data: null,
         });
     }
 });

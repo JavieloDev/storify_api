@@ -1,17 +1,48 @@
 const express = require('express');
 const router = express.Router();
 const {getService} = require('../middlewares/headers');
-const {uploadImage,safeDestroy} = require('../middlewares/upload.handler');
-const path = require('path');
-const fs = require('fs');
+const {uploadImage, safeDestroy} = require('../middlewares/upload.handler');
 const parseFilterQuery = require('../middlewares/parse-filter');
 
+const stripClientMedia = (productData = {}) => {
+    const data = {...productData};
+    delete data.image;
+    delete data.thumbnail_url;
+    delete data.image_public_id;
+    return data;
+};
 
-router.get('/:businessId/products',parseFilterQuery, async (req, res, next) => {
+const parseProductBody = (req) => {
+    const raw = req.body.product ? JSON.parse(req.body.product) : req.body;
+    return stripClientMedia(raw);
+};
+
+const mapProductPayload = (productData) => ({
+    name: productData.name,
+    description: productData.description || '',
+    brand: productData.brand || '',
+    barcode: productData.barcode || null,
+    price: parseFloat(productData.price) || 0,
+    original_price: parseFloat(productData.original_price) || parseFloat(productData.price) || 0,
+    discount: parseFloat(productData.discount) || 0,
+    profit_percentage: parseFloat(productData.profit_percentage) || 0,
+    sales_price: parseFloat(productData.sales_price) || 0,
+    subcategory_id: productData.subcategory_id || productData.sub_category || null,
+    stock: parseInt(productData.stock) || parseInt(productData.quantity) || 0,
+    colors: productData.colors || [],
+    featured: productData.featured === true || productData.featured === 'true' || false,
+    on_sale: productData.on_sale === true || productData.on_sale === 'true' || false,
+    is_new: productData.is_new === true || productData.is_new === 'true' || false,
+    stock_status: productData.stock_status || 'in_stock',
+    is_active: true,
+    business_id: productData.business_id,
+});
+
+router.get('/:businessId/products', parseFilterQuery, async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {businessId} = req.params;
-        const {page = 1, limit = 10,filter, not_paginated = false, since} = req.query;
+        const {page = 1, limit = 10, filter, not_paginated = false, since} = req.query;
 
         const result = await service.findByBusiness(businessId, page, limit, filter, not_paginated, since);
         result.serverTime = new Date().toISOString();
@@ -22,18 +53,13 @@ router.get('/:businessId/products',parseFilterQuery, async (req, res, next) => {
     }
 });
 
-// ============================
-// OBTENER POR ID
-// GET /product/:id
-// ============================
 router.get('/:id', async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {id} = req.params;
-
         const record = await service.findById(id);
 
-        if (!record) {
+        if (!record || record.code === 404) {
             return res.status(404).json({message: 'Producto no encontrado'});
         }
 
@@ -43,47 +69,17 @@ router.get('/:id', async (req, res, next) => {
     }
 });
 
-// ============================
-// CREAR (con imagen optimizada automáticamente)
-// POST /product/create
-// ============================
 router.post('/create', uploadImage, async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
+        const productData = parseProductBody(req);
+        const data = mapProductPayload(productData);
 
-        let productData;
-        if (req.body.product) {
-            productData = JSON.parse(req.body.product);
-        } else {
-            productData = req.body;
-        }
-
-        const data = {
-            name: productData.name,
-            description: productData.description || '',
-            brand: productData.brand || '',
-            barcode: productData.barcode || null,
-            price: parseFloat(productData.price) || 0,
-            original_price: parseFloat(productData.original_price) || parseFloat(productData.price) || 0,
-            discount: parseFloat(productData.discount) || 0,
-            profit_percentage: parseFloat(productData.profit_percentage) || 0,
-            sales_price: parseFloat(productData.sales_price) || 0,
-            subcategory_id: productData.subcategory_id || productData.sub_category || null,
-            quantity: parseInt(productData.quantity) || parseInt(productData.stock) || 0,
-            colors: productData.colors || [],
-            featured: productData.featured === true || productData.featured === 'true' || false,
-            on_sale: productData.on_sale === true || productData.on_sale === 'true' || false,
-            is_new: productData.is_new === true || productData.is_new === 'true' || false,
-            stock_status: productData.stock_status || 'in_stock',
-            is_active: true,
-            business_id: productData.business_id,
-        };
-
-        // Validar que subcategory_id no sea null
         if (!data.subcategory_id) {
+            if (req.file?.publicId) await safeDestroy(req.file.publicId);
             return res.status(400).json({
                 status: 'error',
-                message: 'subcategory_id es requerido'
+                message: 'subcategory_id es requerido',
             });
         }
 
@@ -93,7 +89,7 @@ router.post('/create', uploadImage, async (req, res, next) => {
             status: 'success',
             code: 201,
             message: 'Producto creado correctamente',
-            data: created
+            data: created,
         });
     } catch (error) {
         console.error('❌ Error creando producto:', error);
@@ -102,55 +98,27 @@ router.post('/create', uploadImage, async (req, res, next) => {
     }
 });
 
-// ============================
-// ACTUALIZAR (con imagen optimizada automáticamente)
-// PUT /product/:id
-// ============================
 router.put('/:id', uploadImage, async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {id} = req.params;
-
-        let productData;
-        if (req.body.product) {
-            productData = JSON.parse(req.body.product);
-        } else {
-            productData = req.body;
-        }
+        const productData = parseProductBody(req);
 
         const existing = await service.findById(id);
-        if (!existing) {
-            if (req.file && fs.existsSync(req.file.path)) {
-                fs.unlinkSync(req.file.path);
-            }
+        const record = existing?.data ?? existing;
+        if (!record || existing?.code === 404) {
+            if (req.file?.publicId) await safeDestroy(req.file.publicId);
             return res.status(404).json({message: 'Producto no encontrado'});
         }
 
-        const data = {
-            name: productData.name,
-            description: productData.description || '',
-            brand: productData.brand || '',
-            barcode: productData.barcode || null,
-            price: parseFloat(productData.price) || 0,
-            original_price: parseFloat(productData.original_price) || parseFloat(productData.price) || 0,
-            discount: parseFloat(productData.discount) || 0,
-            profit_percentage: parseFloat(productData.profit_percentage) || 0,
-            sales_price: parseFloat(productData.sales_price) || 0,
-            subcategory_id: productData.subcategory_id || productData.sub_category || null,
-            quantity: parseInt(productData.quantity) || 0,
-            colors: productData.colors || [],
-            featured: productData.featured === true || productData.featured === 'true' || false,
-            on_sale: productData.on_sale === true || productData.on_sale === 'true' || false,
-            is_new: productData.is_new === true || productData.is_new === 'true' || false,
-            stock_status: productData.stock_status || 'in_stock',
-            business_id: productData.business_id,
-        };
+        const data = mapProductPayload(productData);
+        delete data.is_active;
 
-        // Validar que subcategory_id no sea null
         if (!data.subcategory_id) {
+            if (req.file?.publicId) await safeDestroy(req.file.publicId);
             return res.status(400).json({
                 status: 'error',
-                message: 'subcategory_id es requerido'
+                message: 'subcategory_id es requerido',
             });
         }
 
@@ -160,7 +128,7 @@ router.put('/:id', uploadImage, async (req, res, next) => {
             status: 'success',
             code: 200,
             message: 'Producto actualizado correctamente',
-            data: updated
+            data: updated,
         });
     } catch (error) {
         console.error('Error actualizando producto:', error);
@@ -169,21 +137,16 @@ router.put('/:id', uploadImage, async (req, res, next) => {
     }
 });
 
-// ============================
-// ELIMINAR
-// DELETE /product/:id
-// ============================
 router.delete('/:id', async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');
         const {id} = req.params;
-
         const result = await service.delete(id);
         res.json({
             status: 'success',
             code: 200,
             message: 'Producto eliminado correctamente',
-            data: result
+            data: result,
         });
     } catch (error) {
         console.error('Error eliminando producto:', error);
@@ -191,26 +154,7 @@ router.delete('/:id', async (req, res, next) => {
     }
 });
 
-// ============================
-// OBTENER EN OFERTA
-// GET /product/on-sale
-// ============================
-router.get('/on-sale', async (req, res, next) => {
-    try {
-        const service = getService(req, 'PRODUCT');
-        const {page = 1, limit = 10} = req.query;
 
-        const result = await service.findOnSale(page, limit);
-        res.json(result);
-    } catch (error) {
-        next(error);
-    }
-});
-
-// ============================
-// ESTADÍSTICAS
-// GET /product/stats
-// ============================
 router.get('/stats', async (req, res, next) => {
     try {
         const service = getService(req, 'PRODUCT');

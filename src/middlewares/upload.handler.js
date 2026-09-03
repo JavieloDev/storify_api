@@ -12,39 +12,29 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
-const buildThumbnailUrl = (publicId) => cloudinary.url(publicId, {
-    width: 400,
-    height: 400,
-    crop: 'fill',
-    gravity: 'auto',
-    quality: 'auto',
-    fetch_format: 'auto',
-    secure: true,
-});
+const buildThumbnailUrl = (publicId) =>
+    cloudinary.url(publicId, {
+        width: 400,
+        height: 400,
+        crop: 'fill',
+        gravity: 'auto',
+        quality: 'auto',
+        fetch_format: 'auto',
+        secure: true,
+    });
 
-/**
- * Crea un middleware de subida a Cloudinary para una carpeta específica.
- * No toca el disco local en ningún momento — funciona sin problema en
- * Vercel/serverless, donde el filesystem es de solo lectura.
- *
- * `fields`: si se pasa (ej. ['logo', 'banner']), usa upload.fields() y
- * cada fieldname puede tener su propia transformación de Cloudinary
- * (el banner es panorámico, el logo es cuadrado). Si no se pasa, se
- * comporta como antes: upload.single('image').
- */
 const createUploadMiddleware = (folder, {maxSize = 1600, quality = 'auto', fields} = {}) => {
     const storage = new CloudinaryStorage({
         cloudinary,
         params: (req, file) => {
             const isBanner = file.fieldname === 'banner';
-
             return {
                 folder,
                 allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
                 transformation: [
                     isBanner
                         ? {width: 1600, height: 500, crop: 'fill', gravity: 'auto', quality, fetch_format: 'auto'}
-                        : {width: maxSize, height: maxSize, crop: 'limit', quality, fetch_format: 'auto'}
+                        : {width: maxSize, height: maxSize, crop: 'limit', quality, fetch_format: 'auto'},
                 ],
             };
         },
@@ -52,7 +42,7 @@ const createUploadMiddleware = (folder, {maxSize = 1600, quality = 'auto', field
 
     const upload = multer({
         storage,
-        limits: {fileSize: 10 * 1024 * 1024, files: fields ? fields.length : 1},
+        limits: {fileSize: 2 * 1024 * 1024, files: fields ? fields.length : 1},
         fileFilter,
     });
 
@@ -69,8 +59,6 @@ const createUploadMiddleware = (folder, {maxSize = 1600, quality = 'auto', field
                 for (const name of fields) {
                     const file = req.files[name]?.[0];
                     if (!file) continue;
-                    // req.files[name][0].filename = public_id en Cloudinary
-                    // req.files[name][0].path     = secure_url ya optimizada
                     file.publicId = file.filename;
                     file.thumbnailUrl = buildThumbnailUrl(file.publicId);
                 }
@@ -85,7 +73,6 @@ const createUploadMiddleware = (folder, {maxSize = 1600, quality = 'auto', field
     };
 };
 
-/** Borra un asset de Cloudinary por su public_id. Nunca rompe el flujo si falla. */
 const safeDestroy = async (publicId) => {
     if (!publicId) return;
     try {
