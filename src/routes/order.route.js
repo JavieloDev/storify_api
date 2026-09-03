@@ -73,13 +73,11 @@ router.post('/create', async (req, res, next) => {
             });
         }
 
-        const created = await service.create(orderData, items);
+        const result = await service.create(orderData, items);
 
         res.status(201).json({
-            status: 'success',
-            code: 201,
-            message: 'Orden creada correctamente',
-            data: created
+            ...result,
+            code: 201
         });
     } catch (error) {
         console.error('❌ Error creando orden:', error);
@@ -98,12 +96,7 @@ router.put('/:id', async (req, res, next) => {
 
         const updated = await service.update(id, req.body);
 
-        res.json({
-            status: 'success',
-            code: 200,
-            message: 'Orden actualizada correctamente',
-            data: updated
-        });
+        res.json(updated);
     } catch (error) {
         console.error('Error actualizando orden:', error);
         next(error);
@@ -123,12 +116,7 @@ router.patch('/:id/status', async (req, res, next) => {
 
         const updated = await service.updateStatus(id, status);
 
-        res.json({
-            status: 'success',
-            code: 200,
-            message: 'Estado de la orden actualizado correctamente',
-            data: updated
-        });
+        res.json(updated);
     } catch (error) {
         console.error('Error actualizando estado de la orden:', error);
         next(error);
@@ -154,12 +142,7 @@ router.patch('/:id/cancel', async (req, res, next) => {
         }
 
         const result = await service.cancel(id, reason);
-        res.json({
-            status: 'success',
-            code: 200,
-            message: 'Orden cancelada correctamente',
-            data: result
-        });
+        res.json(result);
     } catch (error) {
         console.error('Error cancelando orden:', error);
         next(error);
@@ -174,6 +157,7 @@ router.put('/:id/items', async (req, res) => {
         const result = await service.updateItems(req.params.id, items, additionalData);
         res.json(result);
     } catch (error) {
+        console.error('Error actualizando items de la orden:', error);
         res.status(400).json({status: 'error', code: 400, message: error.message});
     }
 });
