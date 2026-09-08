@@ -10,9 +10,19 @@ router.get('/:businessId/orders', async (req, res, next) => {
     try {
         const service = getService(req, 'ORDER');
         const {businessId} = req.params;
-        const {page = 1, limit = 10, filter = {}, since} = req.query;
+        const {page = 1, limit = 10, filter, since} = req.query;
 
-        const result = await service.findByBusiness(businessId, page, limit, filter, since);
+        let parsedFilter = {};
+        if (filter) {
+            try {
+                parsedFilter = JSON.parse(filter);
+            } catch {
+                return res.status(400).json({status: 'error', message: 'filter inválido, se esperaba JSON'});
+            }
+        }
+
+        const result = await service.findByBusiness(businessId, page, limit, parsedFilter, since);
+
         result.serverTime = new Date().toISOString();
         res.json(result);
     } catch (error) {

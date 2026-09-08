@@ -372,7 +372,11 @@ class OrderService {
         if (filters.date_from || filters.date_to) {
             where.created_at = {};
             if (filters.date_from) where.created_at[Op.gte] = new Date(filters.date_from);
-            if (filters.date_to) where.created_at[Op.lte] = new Date(filters.date_to);
+            if (filters.date_to) {
+                const end = new Date(filters.date_to);
+                end.setHours(23, 59, 59, 999);
+                where.created_at[Op.lte] = end;
+            }
         }
         if (filters.total_min) {
             where.total = {[Op.gte]: Number(filters.total_min)};
