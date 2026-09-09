@@ -9,6 +9,7 @@ const SalesReportService = require("../services/sales-reports");
 const DeviceService = require("../services/device.service");
 const SalesPoint = require("../services/sales-point.service");
 const Employee = require("../services/employee.service");
+const Closing = require("../services/closing.service");
 
 function getService(req, modelName) {
     if (!sequelize) {
@@ -34,6 +35,10 @@ function getService(req, modelName) {
             return new SalesPoint(sequelize);
         case 'EMPLOYEE':
             return new Employee(sequelize);
+        case 'CLOSING':
+            return new Closing(sequelize);
+        case 'CASH_MOVEMENT':
+            return new Closing(sequelize);
         default:
             throw new Error(`Servicio no encontrado para el modelo: ${modelName}`);
     }

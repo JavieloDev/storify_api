@@ -10,6 +10,9 @@ const {SalesPointProduct, SalesPointProductSchema} = require("./sales-point-prod
 const {SalesPointUser, SalesPointUserSchema} = require("./sales-point-users");
 const {SalesPointDevice, SalesPointDeviceSchema} = require("./sales-point-device");
 const {Employee, EmployeeSchema} = require("./employee.model");
+const {DayClosing, DayClosingSchema} = require("./day-closing.model");
+const {CashMovement, CashMovementSchema} = require("./cash-movement.model");
+const {OrderPayment, OrderPaymentSchema} = require("./order-payment.model");
 
 function setupModels(sequelize) {
     Product.init(ProductSchema, Product.config(sequelize));
@@ -24,6 +27,10 @@ function setupModels(sequelize) {
     SalesPointUser.init(SalesPointUserSchema, SalesPointUser.config(sequelize));
     SalesPointDevice.init(SalesPointDeviceSchema, SalesPointDevice.config(sequelize));
     Employee.init(EmployeeSchema, Employee.config(sequelize));
+    DayClosing.init(DayClosingSchema, DayClosing.config(sequelize));
+    CashMovement.init(CashMovementSchema, CashMovement.config(sequelize));
+    OrderPayment.init(OrderPaymentSchema, OrderPayment.config(sequelize));
+
 
     Product.associate(sequelize.models);
     Category.associate(sequelize.models);
@@ -37,6 +44,9 @@ function setupModels(sequelize) {
     SalesPointUser.associate(sequelize.models);
     SalesPointDevice.associate(sequelize.models);
     Employee.associate(sequelize.models);
+    DayClosing.associate(sequelize.models);
+    CashMovement.associate(sequelize.models);
+    OrderPayment.associate(sequelize.models);
 }
 
 module.exports = setupModels;
