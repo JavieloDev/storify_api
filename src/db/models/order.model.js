@@ -108,6 +108,12 @@ class Order extends Model {
             as: 'items'
         });
 
+        Order.hasMany(models.OrderPayment, {
+            foreignKey: 'order_id',
+            as: 'payments'
+        });
+
+
         Order.belongsToMany(models.Product, {
             through: models.OrderItem,
             foreignKey: 'order_id',
