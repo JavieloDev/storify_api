@@ -100,12 +100,43 @@ class OrderService {
         };
     }
 
+    /**
+     * Valida que el sales_point_id pertenezca al negocio indicado y esté
+     * activo. Evita que una orden quede atada a un punto de venta de otro
+     * negocio, o a uno dado de baja.
+     */
+    async _assertSalesPointBelongsToBusiness(salesPointId, businessId, transaction) {
+        const salesPoint = await this.sequelize.models.SalesPoint.findByPk(salesPointId, {
+            attributes: ['id', 'business_id', 'status'],
+            transaction,
+        });
+
+        if (!salesPoint) {
+            throw new Error('El punto de venta especificado no existe');
+        }
+        if (salesPoint.business_id !== businessId) {
+            throw new Error('El punto de venta especificado no pertenece a este negocio');
+        }
+        if (salesPoint.status !== 'active') {
+            throw new Error('El punto de venta especificado no está activo');
+        }
+    }
+
     async create(data, items = []) {
         if (!Array.isArray(items) || items.length === 0) {
             throw new Error('La orden debe contener al menos un producto');
         }
         if (!data.business_id) {
             throw new Error('business_id es requerido');
+        }
+        // 🆕 FIX: sales_point_id es NOT NULL en la tabla ORDERS pero el
+        // create() nunca lo exigía ni lo pasaba al INSERT — ver
+        // order.model.js para el fix de la columna faltante en el schema
+        // de Sequelize. Acá se agrega la validación de negocio equivalente
+        // a business_id/business.status, para no aceptar un
+        // sales_point_id ausente o de otro negocio.
+        if (!data.sales_point_id) {
+            throw new Error('sales_point_id es requerido');
         }
 
         const business = await this.sequelize.models.Business.findByPk(data.business_id, {
@@ -119,6 +150,8 @@ class OrderService {
         }
 
         const createdOrder = await this.sequelize.transaction(async (t) => {
+            await this._assertSalesPointBelongsToBusiness(data.sales_point_id, data.business_id, t);
+
             const products = await this.sequelize.models.Product.findAll({
                 where: {id: {[Op.in]: items.map(i => i.product_id)}},
                 transaction: t
@@ -160,6 +193,7 @@ class OrderService {
                 customer_phone: data.customer_phone || null,
                 customer_email: data.customer_email || null,
                 business_id: data.business_id,
+                sales_point_id: data.sales_point_id, // 🆕 AGREGADO — antes se perdía acá
                 subtotal,
                 discount_total: discountTotal,
                 total,
@@ -197,7 +231,15 @@ class OrderService {
             }
         }
 
-        const allowed = ['status', 'notes', 'customer_name', 'customer_phone', 'customer_email', 'business_id', 'discount_total'];
+        // 🆕 si se intenta cambiar el sales_point_id de una orden existente,
+        // se revalida contra el negocio final (el nuevo si vino en el patch,
+        // si no el que ya tenía la orden) — mismo criterio que en create().
+        if (data.sales_point_id) {
+            const targetBusinessId = data.business_id || existing.business_id;
+            await this._assertSalesPointBelongsToBusiness(data.sales_point_id, targetBusinessId);
+        }
+
+        const allowed = ['status', 'notes', 'customer_name', 'customer_phone', 'customer_email', 'business_id', 'sales_point_id', 'discount_total'];
         const patch = {};
         for (const key of allowed) {
             if (data[key] !== undefined) patch[key] = data[key];
@@ -362,6 +404,9 @@ class OrderService {
         }
         if (filters.business_id) {
             where.business_id = filters.business_id;
+        }
+        if (filters.sales_point_id) {
+            where.sales_point_id = filters.sales_point_id;
         }
         if (filters.status) {
             where.status = filters.status;

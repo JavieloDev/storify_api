@@ -94,6 +94,24 @@ const OrderSchema = {
         onDelete: 'CASCADE',
         onUpdate: 'CASCADE',
     },
+    // 🆕 FIX: la columna sales_point_id ya existía en la tabla ORDERS
+    // (ver ORDER_SCHEMA / migración), pero nunca se declaró acá en el
+    // modelo Sequelize. Como Sequelize solo persiste columnas que conoce,
+    // OrderService.create() podía recibir sales_point_id en `data` y aun
+    // así el INSERT lo omitía por completo, disparando
+    // "null value in column sales_point_id violates not-null constraint"
+    // apenas la columna se puso NOT NULL en la base.
+    sales_point_id: {
+        field: 'sales_point_id',
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: {
+            model: 'SALES_POINTS',
+            key: 'id',
+        },
+        onDelete: 'RESTRICT',
+        onUpdate: 'CASCADE',
+    },
 };
 
 class Order extends Model {
@@ -101,6 +119,14 @@ class Order extends Model {
         Order.belongsTo(models.Business, {
             foreignKey: 'business_id',
             as: 'business'
+        });
+
+        // 🆕 FIX: asociación faltante — sin esto, includes futuros que
+        // quieran traer el punto de venta de una orden (`as: 'salesPoint'`)
+        // fallarían silenciosamente o requerirían un join manual.
+        Order.belongsTo(models.SalesPoint, {
+            foreignKey: 'sales_point_id',
+            as: 'salesPoint'
         });
 
         Order.hasMany(models.OrderItem, {
