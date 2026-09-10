@@ -1,6 +1,12 @@
 const {Op} = require('sequelize');
 
 class OrderService {
+    // 🆕 Marca los pagos que el sistema generó automáticamente (no
+    // ingresados a mano por el usuario), para poder reajustarlos cuando
+    // el total de la orden cambia sin pisar un pago que el cajero haya
+    // registrado manualmente con otro método/monto/referencia.
+    static AUTO_PAYMENT_REFERENCE = 'Registro automático desde total de orden';
+
     constructor(sequelizeInstance) {
         this.sequelize = sequelizeInstance;
         this.model = sequelizeInstance.models.Order;
@@ -46,6 +52,48 @@ class OrderService {
             message,
             data,
         };
+    }
+
+    /**
+     * 🆕 Crea (o ajusta) el pago automático de una orden dentro de la
+     * misma transacción que crea/edita la orden. Si el frontend no manda
+     * payment_method/payment_amount, se asume que se pagó el total
+     * completo en efectivo (mismo criterio que el backfill manual que
+     * ya se hizo sobre datos viejos — ver "reference": "Migración
+     * automática desde total de orden" en pagos existentes).
+     *
+     * Solo toca el pago que ESTE mismo mecanismo creó (identificado por
+     * AUTO_PAYMENT_REFERENCE, salvo que el caller mande una referencia
+     * propia): si el usuario ya registró un pago manual con otra
+     * referencia, no se pisa.
+     */
+    async _upsertAutoPayment(orderId, total, data, transaction) {
+        const {OrderPayment} = this.sequelize.models;
+
+        const method = data.payment_method || 'cash';
+        const amount = data.payment_amount !== undefined
+            ? Number(data.payment_amount)
+            : Number(total);
+
+        if (!(amount > 0)) return; // orden sin pago (ej. total 0) — no crea nada
+
+        const reference = data.payment_reference || OrderService.AUTO_PAYMENT_REFERENCE;
+
+        const existing = await OrderPayment.findOne({
+            where: {order_id: orderId, reference: OrderService.AUTO_PAYMENT_REFERENCE},
+            transaction,
+        });
+
+        if (existing) {
+            await existing.update({method, amount, reference}, {transaction});
+        } else {
+            await OrderPayment.create({
+                order_id: orderId,
+                method,
+                amount,
+                reference,
+            }, {transaction});
+        }
     }
 
     async getNextOrderNumber(businessId, transaction) {
@@ -134,12 +182,6 @@ class OrderService {
         if (!data.business_id) {
             throw new Error('business_id es requerido');
         }
-        // 🆕 FIX: sales_point_id es NOT NULL en la tabla ORDERS pero el
-        // create() nunca lo exigía ni lo pasaba al INSERT — ver
-        // order.model.js para el fix de la columna faltante en el schema
-        // de Sequelize. Acá se agrega la validación de negocio equivalente
-        // a business_id/business.status, para no aceptar un
-        // sales_point_id ausente o de otro negocio.
         if (!data.sales_point_id) {
             throw new Error('sales_point_id es requerido');
         }
@@ -198,7 +240,7 @@ class OrderService {
                 customer_phone: data.customer_phone || null,
                 customer_email: data.customer_email || null,
                 business_id: data.business_id,
-                sales_point_id: data.sales_point_id, // 🆕 AGREGADO — antes se perdía acá
+                sales_point_id: data.sales_point_id,
                 subtotal,
                 discount_total: discountTotal,
                 total,
@@ -207,14 +249,15 @@ class OrderService {
             const itemsToCreate = preparedItems.map(i => ({...i, order_id: order.id}));
             await this.itemModel.bulkCreate(itemsToCreate, {transaction: t});
 
+            // 🆕 Registrar el pago automático de la orden recién creada
+            await this._upsertAutoPayment(order.id, total, data, t);
+
             return this.model.findByPk(order.id, {
                 include: this._includeItems(),
                 transaction: t
             });
         });
 
-        // 🔧 antes: return this.sequelize.transaction(...) devolvía el
-        // modelo crudo directo, sin wrapper — inconsistente con findAll().
         return this._wrapSingle(createdOrder, 'Orden creada correctamente');
     }
 
@@ -236,9 +279,6 @@ class OrderService {
             }
         }
 
-        // 🆕 si se intenta cambiar el sales_point_id de una orden existente,
-        // se revalida contra el negocio final (el nuevo si vino en el patch,
-        // si no el que ya tenía la orden) — mismo criterio que en create().
         if (data.sales_point_id) {
             const targetBusinessId = data.business_id || existing.business_id;
             await this._assertSalesPointBelongsToBusiness(data.sales_point_id, targetBusinessId);
@@ -254,10 +294,21 @@ class OrderService {
             patch.total = Number(existing.subtotal) - Number(patch.discount_total);
         }
 
-        await existing.update(patch);
+        const updated = await this.sequelize.transaction(async (t) => {
+            await existing.update(patch, {transaction: t});
 
-        const updated = await this.model.findByPk(id, {include: this._includeItems()});
-        // 🔧 antes: devolvía el modelo crudo.
+            // 🆕 antes solo se ajustaba el pago si `total` cambió (vía
+            // discount_total). Ahora también se ajusta si vino
+            // payment_method/payment_amount solos — ej: el cajero corrige el
+            // método de pago sin tocar el carrito ni el descuento.
+            const total = patch.total !== undefined ? patch.total : Number(existing.total);
+            if (patch.total !== undefined || data.payment_method !== undefined || data.payment_amount !== undefined) {
+                await this._upsertAutoPayment(id, total, data, t);
+            }
+
+            return this.model.findByPk(id, {include: this._includeItems(), transaction: t});
+        });
+
         return this._wrapSingle(updated, 'Orden actualizada correctamente');
     }
 
@@ -280,18 +331,11 @@ class OrderService {
         });
 
         const cancelled = await this.model.findByPk(id, {include: this._includeItems()});
-        // 🔧 antes: devolvía el modelo crudo.
         return this._wrapSingle(cancelled, 'Orden cancelada correctamente');
     }
 
     async findById(id) {
         const order = await this.model.findByPk(id, {include: this._includeItems()});
-        // 🔧 FIX PRINCIPAL: antes devolvía `order` crudo (o null), sin
-        // envolver — a diferencia de findAll(), que sí envuelve en
-        // {status, code, data, message}. Esa asimetría hacía que el
-        // frontend (que espera Response<Order> con `.data`) recibiera la
-        // orden pelada y la tratara como "no encontrada" aunque sí había
-        // llegado. Ahora es consistente con el resto de los métodos.
         if (!order) {
             return this._wrapSingle(null, 'Orden no encontrada');
         }
@@ -322,7 +366,6 @@ class OrderService {
         }
 
         await record.update({status});
-        // 🔧 antes: devolvía el modelo crudo.
         return this._wrapSingle(record, 'Estado de la orden actualizado correctamente');
     }
 
@@ -336,11 +379,6 @@ class OrderService {
             throw new Error('Orden no encontrada');
         }
 
-        // 🆕 mismo criterio de "estados donde tiene sentido seguir
-        // agregando" que ya usa el frontend (isContinuableInCart /
-        // continuableInCartStatuses) — lo revalidamos acá porque el
-        // frontend puede estar desactualizado (otra pestaña cambió el
-        // estado mientras el usuario tenía el carrito abierto).
         const editableStatuses = ['pending', 'confirmed', 'processing'];
         if (!editableStatuses.includes(record.status)) {
             throw new Error(`No se pueden modificar los productos de una orden en estado "${record.status}"`);
@@ -374,14 +412,9 @@ class OrderService {
                 };
             });
 
-            // 🆕 reemplazo total del set de items — ver nota arriba sobre
-            // por qué "replace" y no "merge".
             await this.itemModel.destroy({where: {order_id: id}, transaction: t});
             await this.itemModel.bulkCreate(preparedItems, {transaction: t});
 
-            // 🆕 recalcula subtotal/total SIEMPRE en base a los items reales
-            // que acaban de quedar persistidos, no en base a lo que mandó el
-            // cliente — el cliente no es fuente de verdad del precio.
             const discountTotal = additionalData.discount_total !== undefined
                 ? Number(additionalData.discount_total)
                 : Number(record.discount_total);
@@ -395,8 +428,11 @@ class OrderService {
 
             await record.update(patch, {transaction: t});
 
+            // 🆕 El total pudo cambiar al agregar/quitar productos —
+            // reajusta el pago automático para que siga cubriendo el total.
+            await this._upsertAutoPayment(id, total, additionalData, t);
+
             const updated = await this.model.findByPk(id, {include: this._includeItems(), transaction: t});
-            // usa el mismo helper _wrapSingle del fix anterior
             return this._wrapSingle(updated, 'Orden actualizada correctamente');
         });
     }
