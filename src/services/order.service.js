@@ -26,6 +26,11 @@ class OrderService {
                 ]
             },
             {
+                model: this.sequelize.models.OrderPayment,
+                as: 'payments',
+                required: false,
+            },
+            {
                 model: this.sequelize.models.Business,
                 as: 'business',
                 required: false,
