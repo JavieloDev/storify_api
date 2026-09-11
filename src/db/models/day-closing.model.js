@@ -102,6 +102,16 @@ const DayClosingSchema = {
         allowNull: false,
         defaultValue: 0,
     },
+    // 🆕 Efectivo que efectivamente queda físicamente en la caja al cerrar.
+    // Puede ser 0 (si se retira todo) o un valor menor o igual a counted_cash
+    // (si se deja un fondo para el próximo turno). El próximo cierre usa este
+    // valor como opening_float, en vez de counted_cash directo.
+    carried_float: {
+        field: 'carried_float',
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        defaultValue: 0,
+    },
     difference: {
         field: 'difference',
         type: DataTypes.DECIMAL(10, 2),
@@ -146,6 +156,13 @@ const DayClosingSchema = {
         type: DataTypes.UUID,
         allowNull: true,
         unique: true,
+    },
+    // 🆕 De dónde vino el registro (offline snapshot vs cálculo directo online)
+    source: {
+        field: 'source',
+        type: DataTypes.STRING(20),
+        allowNull: true,
+        defaultValue: 'online',
     },
     created_at: {
         field: 'created_at',

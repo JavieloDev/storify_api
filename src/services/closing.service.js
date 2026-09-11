@@ -1,4 +1,4 @@
-const { Op } = require('sequelize');
+const {Op} = require('sequelize');
 
 /**
  * ClosingService
@@ -14,11 +14,11 @@ class ClosingService {
     // Resumen del período
     // ----------------------------------------------------------------
     async getSummary(businessId, salesPointId = null, options = {}) {
-        const { transaction = null } = options;
-        const { Order, OrderPayment, DayClosing, CashMovement } = this.models;
+        const {transaction = null} = options;
+        const {Order, OrderPayment, OrderItem, Product, DayClosing, CashMovement} = this.models;
 
         const lastClosing = await DayClosing.findOne({
-            where: { business_id: businessId, sales_point_id: salesPointId },
+            where: {business_id: businessId, sales_point_id: salesPointId},
             order: [['period_end', 'DESC']],
             transaction,
         });
@@ -27,14 +27,21 @@ class ClosingService {
 
         const orderWhere = {
             business_id: businessId,
-            status: { [Op.notIn]: ['cancelled'] },
-            ...(salesPointId ? { sales_point_id: salesPointId } : {}),
-            ...(periodStart ? { created_at: { [Op.gt]: periodStart } } : {}),
+            status: {[Op.notIn]: ['cancelled']},
+            ...(salesPointId ? {sales_point_id: salesPointId} : {}),
+            ...(periodStart ? {created_at: {[Op.gt]: periodStart}} : {}),
         };
 
         const orders = await Order.findAll({
             where: orderWhere,
-            include: [{ model: OrderPayment, as: 'payments' }],
+            include: [
+                {model: OrderPayment, as: 'payments'},
+                {
+                    model: OrderItem,
+                    as: 'items',
+                    attributes: ['id', 'product_id', 'name', 'quantity', 'unit_price', 'subtotal'],
+                },
+            ],
             transaction,
         });
 
@@ -60,13 +67,63 @@ class ClosingService {
             }
         }
 
+        // ----------------------------------------------------------------
+        // 🆕 Agregación de productos vendidos en el período.
+        // El nombre ya viene guardado en OrderItem al momento de la venta,
+        // así que solo pedimos a Product el stock actual — no todo el registro.
+        // ----------------------------------------------------------------
+        const productAgg = new Map();
+        for (const order of orders) {
+            for (const item of order.items || []) {
+                const key = item.product_id;
+                const acc = productAgg.get(key) || {name: item.name, quantity: 0, total: 0};
+                acc.quantity += Number(item.quantity);
+                acc.total += Number(item.subtotal);
+                productAgg.set(key, acc);
+            }
+        }
+
+        const productIds = Array.from(productAgg.keys());
+        const stockRows = productIds.length
+            ? await Product.findAll({
+                where: {id: {[Op.in]: productIds}},
+                attributes: ['id', 'stock', 'stock_status'],
+                transaction,
+            })
+            : [];
+        const stockById = new Map(stockRows.map((p) => [p.id, p]));
+
+        const products = productIds
+            .map((id) => {
+                const agg = productAgg.get(id);
+                const stockInfo = stockById.get(id);
+                const remaining = Number(stockInfo?.stock ?? 0);
+                const status =
+                    stockInfo?.stock_status ??
+                    (remaining <= 0 ? 'critical' : remaining <= 5 ? 'low' : 'normal');
+
+                return {
+                    product_id: id,
+                    name: agg.name || 'Producto eliminado',
+                    quantity_sold: agg.quantity,
+                    total_amount: agg.total,
+                    remaining_stock: remaining,
+                    stock_status: status,
+                };
+            })
+            .sort((a, b) => b.total_amount - a.total_amount);
+
+        summary.products = products;
+        summary.products_total = products.reduce((acc, p) => acc + p.total_amount, 0);
+
+        // ----------------------------------------------------------------
         const movementWhere = {
             business_id: businessId,
             day_closing_id: null,
-            ...(salesPointId ? { sales_point_id: salesPointId } : {}),
-            ...(periodStart ? { created_at: { [Op.gt]: periodStart } } : {}),
+            ...(salesPointId ? {sales_point_id: salesPointId} : {}),
+            ...(periodStart ? {created_at: {[Op.gt]: periodStart}} : {}),
         };
-        const movements = await CashMovement.findAll({ where: movementWhere, transaction });
+        const movements = await CashMovement.findAll({where: movementWhere, transaction});
 
         const cashExpenses = movements
             .filter((m) => ['expense', 'withdrawal'].includes(m.type))
@@ -75,7 +132,11 @@ class ClosingService {
             .filter((m) => m.type === 'deposit')
             .reduce((acc, m) => acc + Number(m.amount), 0);
 
-        const openingFloat = lastClosing ? Number(lastClosing.counted_cash) : 0;
+        // 🔧 opening_float ahora lee carried_float (con fallback a counted_cash
+        // para compatibilidad con cierres viejos que no tenían ese campo)
+        const openingFloat = lastClosing
+            ? Number(lastClosing.carried_float ?? lastClosing.counted_cash)
+            : 0;
 
         summary.cash_expenses = cashExpenses;
         summary.opening_float = openingFloat;
@@ -94,16 +155,16 @@ class ClosingService {
     // Elegibilidad de cierre general
     // ----------------------------------------------------------------
     async getGeneralClosingEligibility(businessId, options = {}) {
-        const { transaction = null } = options;
-        const { SalesPoint, DayClosing } = this.models;
+        const {transaction = null} = options;
+        const {SalesPoint, DayClosing} = this.models;
 
         const activePoints = await SalesPoint.findAll({
-            where: { business_id: businessId, status: 'active' },
+            where: {business_id: businessId, status: 'active'},
             transaction,
         });
 
         const lastGeneralClosing = await DayClosing.findOne({
-            where: { business_id: businessId, sales_point_id: null },
+            where: {business_id: businessId, sales_point_id: null},
             order: [['period_end', 'DESC']],
             transaction,
         });
@@ -117,14 +178,14 @@ class ClosingService {
                 where: {
                     business_id: businessId,
                     sales_point_id: point.id,
-                    ...(since ? { period_end: { [Op.gt]: since } } : {}),
+                    ...(since ? {period_end: {[Op.gt]: since}} : {}),
                 },
                 order: [['period_end', 'DESC']],
                 transaction,
             });
 
             if (!closing) {
-                pending.push({ sales_point_id: point.id, name: point.name });
+                pending.push({sales_point_id: point.id, name: point.name});
             } else if (!earliestPeriodEnd || closing.period_end < earliestPeriodEnd) {
                 earliestPeriodEnd = closing.period_end;
             }
@@ -160,14 +221,21 @@ class ClosingService {
             closed_by = null,
             remote_id = null,
             snapshot = null,
+            cash_action = 'withdraw_all',   // 🆕
+            next_opening_float = 0,         // 🆕
         } = input;
 
-        const { DayClosing, CashMovement } = this.models;
+        const {DayClosing, CashMovement} = this.models;
+
+        // 🆕 Validación defensiva: el fondo a dejar nunca puede superar lo contado
+        const carriedFloat = cash_action === 'keep_float'
+            ? Math.min(Math.max(Number(next_opening_float) || 0, 0), Number(counted_cash))
+            : 0;
 
         return this.sequelize.transaction(async (t) => {
             // Bloqueo de concurrencia
             await this.sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:key))', {
-                replacements: { key: `closing:${business_id}` },
+                replacements: {key: `closing:${business_id}`},
                 transaction: t,
             });
 
@@ -175,7 +243,7 @@ class ClosingService {
             let eligibility = null;
 
             if (sales_point_id === null) {
-                eligibility = await this.getGeneralClosingEligibility(business_id, { transaction: t });
+                eligibility = await this.getGeneralClosingEligibility(business_id, {transaction: t});
                 if (!eligibility.data.eligible) {
                     return {
                         status: false,
@@ -200,11 +268,11 @@ class ClosingService {
                     cash_expenses: snapshot.cash_expenses,
                     opening_float: snapshot.opening_float,
                     expected_cash: snapshot.expected_cash,
-                    movements: snapshot.movement_ids?.map(id => ({ id })) || [],
+                    movements: snapshot.movement_ids?.map(id => ({id})) || [],
                 };
             } else {
                 // 🔄 RECÁLCULO: Cierre online directo
-                const summaryResult = await this.getSummary(business_id, sales_point_id, { transaction: t });
+                const summaryResult = await this.getSummary(business_id, sales_point_id, {transaction: t});
                 summary = summaryResult.data;
             }
 
@@ -231,6 +299,7 @@ class ClosingService {
                 cash_expenses: summary.cash_expenses,
                 expected_cash: summary.expected_cash,
                 counted_cash,
+                carried_float: carriedFloat, // 🆕
                 difference,
                 denominations,
                 notes,
@@ -239,14 +308,14 @@ class ClosingService {
                 closed_by,
                 remote_id,
                 source: snapshot ? 'offline' : 'online',
-            }, { transaction: t });
+            }, {transaction: t});
 
             // Asignar movimientos al cierre
             const movementIds = summary.movements.map(m => m.id);
             if (movementIds.length) {
                 await CashMovement.update(
-                    { day_closing_id: closing.id },
-                    { where: { id: { [Op.in]: movementIds } }, transaction: t }
+                    {day_closing_id: closing.id},
+                    {where: {id: {[Op.in]: movementIds}}, transaction: t}
                 );
             }
 
@@ -262,16 +331,16 @@ class ClosingService {
     // ----------------------------------------------------------------
     // Historial paginado
     // ----------------------------------------------------------------
-    async getHistory(businessId, { salesPointId = undefined, page = 1, limit = 20 } = {}) {
-        const { DayClosing } = this.models;
+    async getHistory(businessId, {salesPointId = undefined, page = 1, limit = 20} = {}) {
+        const {DayClosing} = this.models;
         const offset = (page - 1) * limit;
 
         const where = {
             business_id: businessId,
-            ...(salesPointId !== undefined ? { sales_point_id: salesPointId } : {}),
+            ...(salesPointId !== undefined ? {sales_point_id: salesPointId} : {}),
         };
 
-        const { rows, count } = await DayClosing.findAndCountAll({
+        const {rows, count} = await DayClosing.findAndCountAll({
             where,
             order: [['period_end', 'DESC']],
             limit,
@@ -284,28 +353,28 @@ class ClosingService {
             message: 'Historial de cierres',
             data: {
                 items: rows,
-                pagination: { page, limit, total: count, totalPages: Math.ceil(count / limit) },
+                pagination: {page, limit, total: count, totalPages: Math.ceil(count / limit)},
             },
         };
     }
 
     async getById(businessId, id) {
         if (!businessId) {
-            return { status: false, code: 400, message: 'business_id es requerido', data: null };
+            return {status: false, code: 400, message: 'business_id es requerido', data: null};
         }
 
-        const { DayClosing, CashMovement } = this.models;
+        const {DayClosing, CashMovement} = this.models;
 
         const closing = await DayClosing.findOne({
-            where: { id, business_id: businessId },
-            include: [{ model: CashMovement, as: 'cashMovements' }],
+            where: {id, business_id: businessId},
+            include: [{model: CashMovement, as: 'cashMovements'}],
         });
 
         if (!closing) {
-            return { status: false, code: 404, message: 'Cierre no encontrado', data: null };
+            return {status: false, code: 404, message: 'Cierre no encontrado', data: null};
         }
 
-        return { status: true, code: 200, message: 'Cierre encontrado', data: closing };
+        return {status: true, code: 200, message: 'Cierre encontrado', data: closing};
     }
 }
 
