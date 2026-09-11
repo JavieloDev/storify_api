@@ -39,7 +39,8 @@ class ClosingService {
                 {
                     model: OrderItem,
                     as: 'items',
-                    attributes: ['id', 'product_id', 'name', 'quantity', 'unit_price', 'subtotal'],
+                    // 🔧 'name' no existe en ORDER_ITEMS — se saca de PRODUCTS más abajo
+                    attributes: ['id', 'product_id', 'quantity', 'unit_price', 'subtotal'],
                 },
             ],
             transaction,
@@ -69,14 +70,14 @@ class ClosingService {
 
         // ----------------------------------------------------------------
         // 🆕 Agregación de productos vendidos en el período.
-        // El nombre ya viene guardado en OrderItem al momento de la venta,
-        // así que solo pedimos a Product el stock actual — no todo el registro.
+        // ORDER_ITEMS no guarda el nombre del producto, así que lo traemos
+        // de PRODUCTS junto con el stock actual, en el mismo fetch.
         // ----------------------------------------------------------------
         const productAgg = new Map();
         for (const order of orders) {
             for (const item of order.items || []) {
                 const key = item.product_id;
-                const acc = productAgg.get(key) || {name: item.name, quantity: 0, total: 0};
+                const acc = productAgg.get(key) || {quantity: 0, total: 0};
                 acc.quantity += Number(item.quantity);
                 acc.total += Number(item.subtotal);
                 productAgg.set(key, acc);
@@ -84,27 +85,27 @@ class ClosingService {
         }
 
         const productIds = Array.from(productAgg.keys());
-        const stockRows = productIds.length
+        const productRows = productIds.length
             ? await Product.findAll({
                 where: {id: {[Op.in]: productIds}},
-                attributes: ['id', 'stock', 'stock_status'],
+                attributes: ['id', 'name', 'stock', 'stock_status'],
                 transaction,
             })
             : [];
-        const stockById = new Map(stockRows.map((p) => [p.id, p]));
+        const productById = new Map(productRows.map((p) => [p.id, p]));
 
         const products = productIds
             .map((id) => {
                 const agg = productAgg.get(id);
-                const stockInfo = stockById.get(id);
-                const remaining = Number(stockInfo?.stock ?? 0);
+                const product = productById.get(id);
+                const remaining = Number(product?.stock ?? 0);
                 const status =
-                    stockInfo?.stock_status ??
+                    product?.stock_status ??
                     (remaining <= 0 ? 'critical' : remaining <= 5 ? 'low' : 'normal');
 
                 return {
                     product_id: id,
-                    name: agg.name || 'Producto eliminado',
+                    name: product?.name || 'Producto eliminado',
                     quantity_sold: agg.quantity,
                     total_amount: agg.total,
                     remaining_stock: remaining,
@@ -221,13 +222,13 @@ class ClosingService {
             closed_by = null,
             remote_id = null,
             snapshot = null,
-            cash_action = 'withdraw_all',   // 🆕
-            next_opening_float = 0,         // 🆕
+            cash_action = 'withdraw_all',
+            next_opening_float = 0,
         } = input;
 
         const {DayClosing, CashMovement} = this.models;
 
-        // 🆕 Validación defensiva: el fondo a dejar nunca puede superar lo contado
+        // Validación defensiva: el fondo a dejar nunca puede superar lo contado
         const carriedFloat = cash_action === 'keep_float'
             ? Math.min(Math.max(Number(next_opening_float) || 0, 0), Number(counted_cash))
             : 0;
@@ -299,7 +300,7 @@ class ClosingService {
                 cash_expenses: summary.cash_expenses,
                 expected_cash: summary.expected_cash,
                 counted_cash,
-                carried_float: carriedFloat, // 🆕
+                carried_float: carriedFloat,
                 difference,
                 denominations,
                 notes,
