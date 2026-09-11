@@ -88,7 +88,7 @@ class ClosingService {
         const productRows = productIds.length
             ? await Product.findAll({
                 where: {id: {[Op.in]: productIds}},
-                attributes: ['id', 'name', 'stock', 'stock_status'],
+                attributes: ['id', 'name', 'stock', 'thumbnail_url', 'stock_status'],
                 transaction,
             })
             : [];
@@ -110,6 +110,7 @@ class ClosingService {
                     total_amount: agg.total,
                     remaining_stock: remaining,
                     stock_status: status,
+                    image: product?.thumbnail_url || null,
                 };
             })
             .sort((a, b) => b.total_amount - a.total_amount);
