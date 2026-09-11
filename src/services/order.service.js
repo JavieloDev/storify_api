@@ -55,44 +55,59 @@ class OrderService {
     }
 
     /**
-     * 🆕 Crea (o ajusta) el pago automático de una orden dentro de la
-     * misma transacción que crea/edita la orden. Si el frontend no manda
-     * payment_method/payment_amount, se asume que se pagó el total
-     * completo en efectivo (mismo criterio que el backfill manual que
-     * ya se hizo sobre datos viejos — ver "reference": "Migración
-     * automática desde total de orden" en pagos existentes).
+     * 🆕 Reemplaza _upsertAutoPayment. Antes asumía un único pago por orden
+     * (match por order_id, update-in-place). Ahora una orden puede tener
+     * VARIOS pagos simultáneos (ej: mitad cash, mitad card) — la estrategia
+     * pasa a ser "reemplazo completo": se borran todos los OrderPayment de
+     * la orden y se recrean desde el array recibido. Es más simple que un
+     * diff/match contra pagos existentes, y el volumen por orden es bajo
+     * (1-3 filas), así que el costo es despreciable.
      *
-     * Solo toca el pago que ESTE mismo mecanismo creó (identificado por
-     * AUTO_PAYMENT_REFERENCE, salvo que el caller mande una referencia
-     * propia): si el usuario ya registró un pago manual con otra
-     * referencia, no se pisa.
+     * Acepta dos formatos en `data` para no romper clientes viejos:
+     *   - Nuevo:  data.payments = [{ method, amount, reference? }, ...]
+     *   - Legacy: data.payment_method / data.payment_amount (un solo pago)
+     * Si no viene NINGUNO de los dos, se asume el comportamiento histórico:
+     * pagado el total completo en efectivo.
      */
-    async _upsertAutoPayment(orderId, total, data, transaction) {
+    async _syncPayments(orderId, total, data, transaction) {
         const {OrderPayment} = this.sequelize.models;
 
-        const method = data.payment_method || 'cash';
-        const amount = data.payment_amount !== undefined
-            ? Number(data.payment_amount)
-            : Number(total);
+        let payments;
 
-        if (!(amount > 0)) return; // orden sin pago (ej. total 0) — no crea nada
-
-        const reference = data.payment_reference || OrderService.AUTO_PAYMENT_REFERENCE;
-
-        const existing = await OrderPayment.findOne({
-            where: {order_id: orderId, reference: OrderService.AUTO_PAYMENT_REFERENCE},
-            transaction,
-        });
-
-        if (existing) {
-            await existing.update({method, amount, reference}, {transaction});
+        if (Array.isArray(data.payments)) {
+            payments = data.payments;
+        } else if (data.payment_method !== undefined || data.payment_amount !== undefined) {
+            const amount = data.payment_amount !== undefined ? Number(data.payment_amount) : Number(total);
+            payments = amount > 0
+                ? [{method: data.payment_method || 'cash', amount, reference: data.payment_reference}]
+                : [];
         } else {
-            await OrderPayment.create({
-                order_id: orderId,
-                method,
-                amount,
-                reference,
-            }, {transaction});
+            payments = Number(total) > 0
+                ? [{method: 'cash', amount: Number(total), reference: OrderService.AUTO_PAYMENT_REFERENCE}]
+                : [];
+        }
+
+        for (const p of payments) {
+            if (!(Number(p.amount) > 0)) {
+                throw new Error('Cada pago debe tener un monto mayor a 0');
+            }
+            if (!['cash', 'card', 'transfer', 'other'].includes(p.method)) {
+                throw new Error(`Método de pago inválido: ${p.method}`);
+            }
+        }
+
+        await OrderPayment.destroy({where: {order_id: orderId}, transaction});
+
+        if (payments.length > 0) {
+            await OrderPayment.bulkCreate(
+                payments.map(p => ({
+                    order_id: orderId,
+                    method: p.method || 'cash',
+                    amount: Number(p.amount),
+                    reference: p.reference ?? null,
+                })),
+                {transaction}
+            );
         }
     }
 
@@ -250,7 +265,7 @@ class OrderService {
             await this.itemModel.bulkCreate(itemsToCreate, {transaction: t});
 
             // 🆕 Registrar el pago automático de la orden recién creada
-            await this._upsertAutoPayment(order.id, total, data, t);
+            await this._syncPayments(order.id, total, data, t);
 
             return this.model.findByPk(order.id, {
                 include: this._includeItems(),
@@ -303,7 +318,7 @@ class OrderService {
             // método de pago sin tocar el carrito ni el descuento.
             const total = patch.total !== undefined ? patch.total : Number(existing.total);
             if (patch.total !== undefined || data.payment_method !== undefined || data.payment_amount !== undefined) {
-                await this._upsertAutoPayment(id, total, data, t);
+                await this._syncPayments(id, total, data, t);
             }
 
             return this.model.findByPk(id, {include: this._includeItems(), transaction: t});
@@ -430,7 +445,7 @@ class OrderService {
 
             // 🆕 El total pudo cambiar al agregar/quitar productos —
             // reajusta el pago automático para que siga cubriendo el total.
-            await this._upsertAutoPayment(id, total, additionalData, t);
+            await this._syncPayments(id, total, additionalData, t);
 
             const updated = await this.model.findByPk(id, {include: this._includeItems(), transaction: t});
             return this._wrapSingle(updated, 'Orden actualizada correctamente');
