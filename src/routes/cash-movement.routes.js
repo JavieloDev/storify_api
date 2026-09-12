@@ -158,13 +158,13 @@ router.put('/:id', async (req, res, next) => {
         const result = await service.update(id, business_id, req.body);
 
         if (!result.data) {
-            return res.status(404).json({
+            return res.status(result.code || 404).json({
                 status: 'error',
-                message: 'Movimiento de caja no encontrado'
+                message: result.message || 'Movimiento de caja no encontrado'
             });
         }
 
-        res.json(result);
+        res.status(result.code || 200).json(result);
     } catch (error) {
         console.error('❌ Error actualizando movimiento de caja:', error);
         next(error);

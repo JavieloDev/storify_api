@@ -6,6 +6,10 @@ const {Op} = require('sequelize');
  * - constructor con DI de sequelizeInstance
  * - respuestas estructuradas { status, code, message, data }
  * - lógica de negocio espejada 1:1 con el frontend
+ *
+ * Identidad offline-first:
+ * el cliente puede mandar su UUID local en `id` / `remote_id`.
+ * Se busca por id O remote_id, y el create es idempotente.
  */
 class CashMovementService {
     constructor(sequelizeInstance) {
@@ -13,17 +17,31 @@ class CashMovementService {
         this.models = sequelizeInstance.models;
     }
 
-    // ============================================================
-    // UTILITY: Validar y limpiar el motivo (reason)
-    // ============================================================
-    // 🆕 reason es NOT NULL en la tabla y el frontend ya lo valida antes
-    // de mandar el request, pero esa validación vive solo en el flujo de
-    // sync del POS. Cualquier otro cliente (panel admin, bulkCreate, un
-    // request manual) puede mandar reason vacío/undefined y romper el
-    // insert con un error crudo de Postgres. Se valida acá también para
-    // que la regla de negocio no dependa de un solo cliente.
     _cleanReason(reason) {
         return (reason ?? '').toString().trim();
+    }
+
+    _findMovement(businessId, id, options = {}) {
+        const {CashMovement} = this.models;
+        return CashMovement.findOne({
+            where: {
+                business_id: businessId,
+                [Op.or]: [{id}, {remote_id: id}],
+            },
+            ...options,
+        });
+    }
+
+    _stripUnsafePatch(input = {}) {
+        const {
+            id: _id,
+            business_id: _businessId,
+            remote_id: _remoteId,
+            synced: _synced,
+            created_at: _createdAt,
+            ...safe
+        } = input;
+        return safe;
     }
 
     // ============================================================
@@ -101,11 +119,7 @@ class CashMovementService {
             };
         }
 
-        const {CashMovement} = this.models;
-
-        const movement = await CashMovement.findOne({
-            where: {id, business_id: businessId},
-        });
+        const movement = await this._findMovement(businessId, id);
 
         if (!movement) {
             return {
@@ -139,10 +153,6 @@ class CashMovementService {
             remote_id = null,
         } = input;
 
-        // 🆕 Validación defensiva: reason es NOT NULL en la BD.
-        // Antes esto no se validaba acá y dependía 100% de que el
-        // frontend mandara algo — cualquier otro cliente rompía el
-        // insert con un 500 crudo de Postgres en vez de un 400 claro.
         const cleanReason = this._cleanReason(reason);
         if (!cleanReason) {
             return {
@@ -155,7 +165,6 @@ class CashMovementService {
 
         const {CashMovement} = this.models;
 
-        // Validar que el negocio existe
         const business = await this.models.Business.findByPk(business_id);
         if (!business) {
             return {
@@ -166,7 +175,6 @@ class CashMovementService {
             };
         }
 
-        // Si tiene sales_point_id, validar que existe
         if (sales_point_id) {
             const salesPoint = await this.models.SalesPoint.findByPk(sales_point_id);
             if (!salesPoint) {
@@ -179,7 +187,6 @@ class CashMovementService {
             }
         }
 
-        // Si tiene day_closing_id, validar que existe
         if (day_closing_id) {
             const closing = await this.models.DayClosing.findByPk(day_closing_id);
             if (!closing) {
@@ -192,7 +199,21 @@ class CashMovementService {
             }
         }
 
+        const clientId = input.id || remote_id || null;
+        if (clientId) {
+            const existing = await this._findMovement(business_id, clientId);
+            if (existing) {
+                return {
+                    status: true,
+                    code: 200,
+                    message: 'Movimiento de caja ya existía',
+                    data: existing,
+                };
+            }
+        }
+
         const movement = await CashMovement.create({
+            ...(clientId ? {id: clientId} : {}),
             business_id,
             sales_point_id,
             type,
@@ -200,7 +221,7 @@ class CashMovementService {
             reason: cleanReason,
             employee_id,
             day_closing_id,
-            remote_id,
+            remote_id: remote_id || clientId || null,
         });
 
         return {
@@ -215,11 +236,7 @@ class CashMovementService {
     // ACTUALIZAR MOVIMIENTO
     // ============================================================
     async update(id, businessId, input) {
-        const {CashMovement} = this.models;
-
-        const movement = await CashMovement.findOne({
-            where: {id, business_id: businessId},
-        });
+        const movement = await this._findMovement(businessId, id);
 
         if (!movement) {
             return {
@@ -230,10 +247,11 @@ class CashMovementService {
             };
         }
 
-        // No permitir actualizar campos críticos si ya está asociado a un cierre
+        const patch = this._stripUnsafePatch(input);
+
         if (movement.day_closing_id) {
             const disallowedFields = ['type', 'amount', 'business_id', 'sales_point_id'];
-            const attemptedChanges = Object.keys(input).filter(k => disallowedFields.includes(k));
+            const attemptedChanges = Object.keys(patch).filter(k => disallowedFields.includes(k));
 
             if (attemptedChanges.length > 0) {
                 return {
@@ -245,9 +263,6 @@ class CashMovementService {
             }
         }
 
-        // 🆕 Si el PUT trae reason, no se puede dejar vacío (mismo criterio
-        // que en create). Si no viene reason en el input, no se toca.
-        const patch = {...input};
         if (Object.prototype.hasOwnProperty.call(patch, 'reason')) {
             const cleanReason = this._cleanReason(patch.reason);
             if (!cleanReason) {
@@ -261,7 +276,6 @@ class CashMovementService {
             patch.reason = cleanReason;
         }
 
-        // Validar sales_point_id si viene
         if (patch.sales_point_id) {
             const salesPoint = await this.models.SalesPoint.findByPk(patch.sales_point_id);
             if (!salesPoint) {
@@ -274,7 +288,6 @@ class CashMovementService {
             }
         }
 
-        // Validar day_closing_id si viene
         if (patch.day_closing_id) {
             const closing = await this.models.DayClosing.findByPk(patch.day_closing_id);
             if (!closing) {
@@ -304,11 +317,7 @@ class CashMovementService {
     // ELIMINAR MOVIMIENTO (solo si no está asociado a un cierre)
     // ============================================================
     async delete(id, businessId) {
-        const {CashMovement} = this.models;
-
-        const movement = await CashMovement.findOne({
-            where: {id, business_id: businessId},
-        });
+        const movement = await this._findMovement(businessId, id);
 
         if (!movement) {
             return {
@@ -319,7 +328,6 @@ class CashMovementService {
             };
         }
 
-        // No permitir eliminar si ya está asociado a un cierre
         if (movement.day_closing_id) {
             return {
                 status: false,
@@ -335,12 +343,12 @@ class CashMovementService {
             status: true,
             code: 200,
             message: 'Movimiento eliminado correctamente',
-            data: {id},
+            data: {id: movement.id},
         };
     }
 
     // ============================================================
-    // ASIGNAR MOVIMIENTOS A UN CIERRE (método auxiliar para ClosingService)
+    // ASIGNAR MOVIMIENTOS A UN CIERRE
     // ============================================================
     async assignToClosing(movementIds, closingId, transaction = null) {
         const {CashMovement} = this.models;
@@ -357,7 +365,12 @@ class CashMovementService {
         const [updated] = await CashMovement.update(
             {day_closing_id: closingId},
             {
-                where: {id: {[Op.in]: movementIds}},
+                where: {
+                    [Op.or]: [
+                        {id: {[Op.in]: movementIds}},
+                        {remote_id: {[Op.in]: movementIds}},
+                    ],
+                },
                 transaction,
             }
         );
@@ -451,11 +464,6 @@ class CashMovementService {
         const {CashMovement} = this.models;
         const {transaction = null} = options;
 
-        // 🆕 Mismo problema que en create(): este método se usa para
-        // sincronización masiva y antes no validaba reason en absoluto,
-        // dejando pasar cualquier item sin motivo directo al INSERT.
-        // Se separan los items válidos de los inválidos en vez de que
-        // todo el lote falle por un solo registro corrupto.
         const rejected = [];
         const validMovements = [];
 
@@ -468,7 +476,14 @@ class CashMovementService {
                 });
                 continue;
             }
-            validMovements.push({...movement, reason: cleanReason});
+
+            const clientId = movement.id || movement.remote_id || null;
+            validMovements.push({
+                ...movement,
+                ...(clientId ? {id: clientId} : {}),
+                reason: cleanReason,
+                remote_id: movement.remote_id || clientId || null,
+            });
         }
 
         const created = validMovements.length
