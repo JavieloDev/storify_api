@@ -1,18 +1,18 @@
 const {Op} = require('sequelize');
 
-/**
- * ClosingService
- * Mismo patrón que CategoryService/BusinessService del proyecto
- */
 class ClosingService {
     constructor(sequelizeInstance) {
         this.sequelize = sequelizeInstance;
         this.models = sequelizeInstance.models;
     }
 
-    // ----------------------------------------------------------------
-    // Resumen del período
-    // ----------------------------------------------------------------
+    _toDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
     async getSummary(businessId, salesPointId = null, options = {}) {
         const {transaction = null} = options;
         const {Order, OrderPayment, OrderItem, Product, DayClosing, CashMovement} = this.models;
@@ -22,7 +22,7 @@ class ClosingService {
             order: [['period_end', 'DESC']],
             transaction,
         });
-        const periodStart = lastClosing ? lastClosing.period_end : null;
+        const periodStart = lastClosing ? this._toDate(lastClosing.period_end) : null;
         const periodEnd = new Date();
 
         const orderWhere = {
@@ -39,7 +39,6 @@ class ClosingService {
                 {
                     model: OrderItem,
                     as: 'items',
-                    // 🔧 'name' no existe en ORDER_ITEMS — se saca de PRODUCTS más abajo
                     attributes: ['id', 'product_id', 'quantity', 'unit_price', 'subtotal'],
                 },
             ],
@@ -68,11 +67,6 @@ class ClosingService {
             }
         }
 
-        // ----------------------------------------------------------------
-        // 🆕 Agregación de productos vendidos en el período.
-        // ORDER_ITEMS no guarda el nombre del producto, así que lo traemos
-        // de PRODUCTS junto con el stock actual, en el mismo fetch.
-        // ----------------------------------------------------------------
         const productAgg = new Map();
         for (const order of orders) {
             for (const item of order.items || []) {
@@ -118,7 +112,6 @@ class ClosingService {
         summary.products = products;
         summary.products_total = products.reduce((acc, p) => acc + p.total_amount, 0);
 
-        // ----------------------------------------------------------------
         const movementWhere = {
             business_id: businessId,
             day_closing_id: null,
@@ -134,8 +127,6 @@ class ClosingService {
             .filter((m) => m.type === 'deposit')
             .reduce((acc, m) => acc + Number(m.amount), 0);
 
-        // 🔧 opening_float ahora lee carried_float (con fallback a counted_cash
-        // para compatibilidad con cierres viejos que no tenían ese campo)
         const openingFloat = lastClosing
             ? Number(lastClosing.carried_float ?? lastClosing.counted_cash)
             : 0;
@@ -153,9 +144,6 @@ class ClosingService {
         };
     }
 
-    // ----------------------------------------------------------------
-    // Elegibilidad de cierre general
-    // ----------------------------------------------------------------
     async getGeneralClosingEligibility(businessId, options = {}) {
         const {transaction = null} = options;
         const {SalesPoint, DayClosing} = this.models;
@@ -170,7 +158,7 @@ class ClosingService {
             order: [['period_end', 'DESC']],
             transaction,
         });
-        const since = lastGeneralClosing ? lastGeneralClosing.period_end : null;
+        const since = lastGeneralClosing ? this._toDate(lastGeneralClosing.period_end) : null;
 
         const pending = [];
         let earliestPeriodEnd = null;
@@ -209,9 +197,6 @@ class ClosingService {
         };
     }
 
-    // ----------------------------------------------------------------
-    // Ejecuta el cierre (con soporte para snapshot offline)
-    // ----------------------------------------------------------------
     async closeDay(input) {
         const {
             business_id,
@@ -229,13 +214,11 @@ class ClosingService {
 
         const {DayClosing, CashMovement} = this.models;
 
-        // Validación defensiva: el fondo a dejar nunca puede superar lo contado
         const carriedFloat = cash_action === 'keep_float'
             ? Math.min(Math.max(Number(next_opening_float) || 0, 0), Number(counted_cash))
             : 0;
 
         return this.sequelize.transaction(async (t) => {
-            // Bloqueo de concurrencia
             await this.sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:key))', {
                 replacements: {key: `closing:${business_id}`},
                 transaction: t,
@@ -257,7 +240,6 @@ class ClosingService {
             }
 
             if (snapshot) {
-                // ✅ CONFIANZA: Usar lo que el cliente calculó
                 summary = {
                     period_start: snapshot.period_start,
                     period_end: snapshot.period_end,
@@ -273,12 +255,10 @@ class ClosingService {
                     movements: snapshot.movement_ids?.map(id => ({id})) || [],
                 };
             } else {
-                // 🔄 RECÁLCULO: Cierre online directo
                 const summaryResult = await this.getSummary(business_id, sales_point_id, {transaction: t});
                 summary = summaryResult.data;
             }
 
-            // Determinar period_end para cierre general
             const periodEnd = sales_point_id === null
                 ? (eligibility?.data?.suggested_period_end || summary.period_end)
                 : summary.period_end;
@@ -312,12 +292,19 @@ class ClosingService {
                 source: snapshot ? 'offline' : 'online',
             }, {transaction: t});
 
-            // Asignar movimientos al cierre
-            const movementIds = summary.movements.map(m => m.id);
+            const movementIds = (summary.movements || []).map(m => m.id).filter(Boolean);
             if (movementIds.length) {
                 await CashMovement.update(
                     {day_closing_id: closing.id},
-                    {where: {id: {[Op.in]: movementIds}}, transaction: t}
+                    {
+                        where: {
+                            [Op.or]: [
+                                {id: {[Op.in]: movementIds}},
+                                {remote_id: {[Op.in]: movementIds}},
+                            ],
+                        },
+                        transaction: t,
+                    }
                 );
             }
 
@@ -330,9 +317,6 @@ class ClosingService {
         });
     }
 
-    // ----------------------------------------------------------------
-    // Historial paginado
-    // ----------------------------------------------------------------
     async getHistory(businessId, {salesPointId = undefined, page = 1, limit = 20} = {}) {
         const {DayClosing} = this.models;
         const offset = (page - 1) * limit;
@@ -368,7 +352,10 @@ class ClosingService {
         const {DayClosing, CashMovement} = this.models;
 
         const closing = await DayClosing.findOne({
-            where: {id, business_id: businessId},
+            where: {
+                business_id: businessId,
+                [Op.or]: [{id}, {remote_id: id}],
+            },
             include: [{model: CashMovement, as: 'cashMovements'}],
         });
 
