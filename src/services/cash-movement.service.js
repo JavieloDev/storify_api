@@ -14,6 +14,19 @@ class CashMovementService {
     }
 
     // ============================================================
+    // UTILITY: Validar y limpiar el motivo (reason)
+    // ============================================================
+    // 🆕 reason es NOT NULL en la tabla y el frontend ya lo valida antes
+    // de mandar el request, pero esa validación vive solo en el flujo de
+    // sync del POS. Cualquier otro cliente (panel admin, bulkCreate, un
+    // request manual) puede mandar reason vacío/undefined y romper el
+    // insert con un error crudo de Postgres. Se valida acá también para
+    // que la regla de negocio no dependa de un solo cliente.
+    _cleanReason(reason) {
+        return (reason ?? '').toString().trim();
+    }
+
+    // ============================================================
     // HISTORIAL PAGINADO
     // ============================================================
     async getHistory(businessId, {salesPointId = undefined, page = 1, limit = 1000, since = null} = {}) {
@@ -126,6 +139,20 @@ class CashMovementService {
             remote_id = null,
         } = input;
 
+        // 🆕 Validación defensiva: reason es NOT NULL en la BD.
+        // Antes esto no se validaba acá y dependía 100% de que el
+        // frontend mandara algo — cualquier otro cliente rompía el
+        // insert con un 500 crudo de Postgres en vez de un 400 claro.
+        const cleanReason = this._cleanReason(reason);
+        if (!cleanReason) {
+            return {
+                status: false,
+                code: 400,
+                message: 'El movimiento de caja requiere un motivo (reason)',
+                data: null,
+            };
+        }
+
         const {CashMovement} = this.models;
 
         // Validar que el negocio existe
@@ -170,7 +197,7 @@ class CashMovementService {
             sales_point_id,
             type,
             amount,
-            reason,
+            reason: cleanReason,
             employee_id,
             day_closing_id,
             remote_id,
@@ -218,9 +245,25 @@ class CashMovementService {
             }
         }
 
+        // 🆕 Si el PUT trae reason, no se puede dejar vacío (mismo criterio
+        // que en create). Si no viene reason en el input, no se toca.
+        const patch = {...input};
+        if (Object.prototype.hasOwnProperty.call(patch, 'reason')) {
+            const cleanReason = this._cleanReason(patch.reason);
+            if (!cleanReason) {
+                return {
+                    status: false,
+                    code: 400,
+                    message: 'El motivo (reason) no puede quedar vacío',
+                    data: null,
+                };
+            }
+            patch.reason = cleanReason;
+        }
+
         // Validar sales_point_id si viene
-        if (input.sales_point_id) {
-            const salesPoint = await this.models.SalesPoint.findByPk(input.sales_point_id);
+        if (patch.sales_point_id) {
+            const salesPoint = await this.models.SalesPoint.findByPk(patch.sales_point_id);
             if (!salesPoint) {
                 return {
                     status: false,
@@ -232,8 +275,8 @@ class CashMovementService {
         }
 
         // Validar day_closing_id si viene
-        if (input.day_closing_id) {
-            const closing = await this.models.DayClosing.findByPk(input.day_closing_id);
+        if (patch.day_closing_id) {
+            const closing = await this.models.DayClosing.findByPk(patch.day_closing_id);
             if (!closing) {
                 return {
                     status: false,
@@ -245,7 +288,7 @@ class CashMovementService {
         }
 
         await movement.update({
-            ...input,
+            ...patch,
             updated_at: new Date(),
         });
 
@@ -408,16 +451,39 @@ class CashMovementService {
         const {CashMovement} = this.models;
         const {transaction = null} = options;
 
-        const created = await CashMovement.bulkCreate(movements, {
-            transaction,
-            ignoreDuplicates: true,
-        });
+        // 🆕 Mismo problema que en create(): este método se usa para
+        // sincronización masiva y antes no validaba reason en absoluto,
+        // dejando pasar cualquier item sin motivo directo al INSERT.
+        // Se separan los items válidos de los inválidos en vez de que
+        // todo el lote falle por un solo registro corrupto.
+        const rejected = [];
+        const validMovements = [];
+
+        for (const movement of movements) {
+            const cleanReason = this._cleanReason(movement.reason);
+            if (!cleanReason) {
+                rejected.push({
+                    id: movement.id ?? movement.remote_id ?? null,
+                    message: 'El movimiento de caja requiere un motivo (reason)',
+                });
+                continue;
+            }
+            validMovements.push({...movement, reason: cleanReason});
+        }
+
+        const created = validMovements.length
+            ? await CashMovement.bulkCreate(validMovements, {
+                transaction,
+                ignoreDuplicates: true,
+            })
+            : [];
 
         return {
             status: true,
             code: 201,
-            message: `${created.length} movimientos creados`,
+            message: `${created.length} movimientos creados${rejected.length ? `, ${rejected.length} rechazados` : ''}`,
             data: created,
+            rejected: rejected.length ? rejected : undefined,
         };
     }
 }
