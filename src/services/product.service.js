@@ -14,7 +14,7 @@ function rejectInlineImage(data) {
 
 function stockStatusFromStock(stock) {
     const n = Number(stock) || 0;
-    if (n === 0) return 'out';
+    if (n <= 0) return 'out';
     if (n <= 2) return 'critical';
     if (n <= 5) return 'low';
     if (n <= 10) return 'medium';
@@ -30,6 +30,26 @@ class ProductService {
             const availableModels = Object.keys(sequelizeInstance.models).join(', ');
             throw new Error(`Modelo Product no encontrado. Modelos disponibles: ${availableModels}`);
         }
+    }
+
+    async adjustStock(id, delta, {transaction} = {}) {
+        const record = await this.model.findByPk(id, {
+            transaction,
+            lock: transaction ? transaction.LOCK.UPDATE : undefined,
+        });
+        if (!record) throw new Error('Producto no encontrado');
+
+        const next = Number(record.stock || 0) + Number(delta);
+        if (next < 0) {
+            throw new Error(`Stock insuficiente para el producto "${record.name}"`);
+        }
+
+        await record.update({
+            stock: next,
+            stock_status: stockStatusFromStock(next),
+        }, {transaction});
+
+        return record;
     }
 
     async findAll({
@@ -291,3 +311,4 @@ class ProductService {
 }
 
 module.exports = ProductService;
+module.exports.stockStatusFromStock = stockStatusFromStock;

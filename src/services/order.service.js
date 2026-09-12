@@ -1,10 +1,7 @@
 const {Op} = require('sequelize');
+const {stockStatusFromStock} = require('./product.service');
 
 class OrderService {
-    // 🆕 Marca los pagos que el sistema generó automáticamente (no
-    // ingresados a mano por el usuario), para poder reajustarlos cuando
-    // el total de la orden cambia sin pisar un pago que el cajero haya
-    // registrado manualmente con otro método/monto/referencia.
     static AUTO_PAYMENT_REFERENCE = 'Registro automático desde total de orden';
 
     constructor(sequelizeInstance) {
@@ -44,7 +41,6 @@ class OrderService {
         ];
     }
 
-    // 🆕 helper para no repetir el shape en cada método de un solo registro
     _wrapSingle(data, message) {
         return {
             status: 'success',
@@ -54,21 +50,54 @@ class OrderService {
         };
     }
 
+    _qtyByProduct(items) {
+        const map = new Map();
+        for (const item of items || []) {
+            const id = item.product_id;
+            if (!id) continue;
+            const quantity = parseInt(item.quantity, 10) || 1;
+            map.set(id, (map.get(id) || 0) + quantity);
+        }
+        return map;
+    }
+
     /**
-     * 🆕 Reemplaza _upsertAutoPayment. Antes asumía un único pago por orden
-     * (match por order_id, update-in-place). Ahora una orden puede tener
-     * VARIOS pagos simultáneos (ej: mitad cash, mitad card) — la estrategia
-     * pasa a ser "reemplazo completo": se borran todos los OrderPayment de
-     * la orden y se recrean desde el array recibido. Es más simple que un
-     * diff/match contra pagos existentes, y el volumen por orden es bajo
-     * (1-3 filas), así que el costo es despreciable.
-     *
-     * Acepta dos formatos en `data` para no romper clientes viejos:
-     *   - Nuevo:  data.payments = [{ method, amount, reference? }, ...]
-     *   - Legacy: data.payment_method / data.payment_amount (un solo pago)
-     * Si no viene NINGUNO de los dos, se asume el comportamiento histórico:
-     * pagado el total completo en efectivo.
+     * delta > 0  → entra stock (cancelar / sacar productos)
+     * delta < 0  → sale stock (crear / agregar productos)
      */
+    async _adjustProductsStock(deltas, transaction) {
+        const ids = [...deltas.entries()]
+            .filter(([, delta]) => Number(delta) !== 0)
+            .map(([id]) => id);
+
+        if (ids.length === 0) return;
+
+        const products = await this.sequelize.models.Product.findAll({
+            where: {id: {[Op.in]: ids}},
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+        });
+
+        const byId = new Map(products.map((p) => [p.id, p]));
+
+        for (const productId of ids) {
+            const product = byId.get(productId);
+            if (!product) {
+                throw new Error(`Producto ${productId} no encontrado al ajustar stock`);
+            }
+
+            const next = Number(product.stock || 0) + Number(deltas.get(productId));
+            if (next < 0) {
+                throw new Error(`Stock insuficiente para el producto "${product.name}"`);
+            }
+
+            await product.update({
+                stock: next,
+                stock_status: stockStatusFromStock(next),
+            }, {transaction});
+        }
+    }
+
     async _syncPayments(orderId, total, data, transaction) {
         const {OrderPayment} = this.sequelize.models;
 
@@ -168,11 +197,6 @@ class OrderService {
         };
     }
 
-    /**
-     * Valida que el sales_point_id pertenezca al negocio indicado y esté
-     * activo. Evita que una orden quede atada a un punto de venta de otro
-     * negocio, o a uno dado de baja.
-     */
     async _assertSalesPointBelongsToBusiness(salesPointId, businessId, transaction) {
         const salesPoint = await this.sequelize.models.SalesPoint.findByPk(salesPointId, {
             attributes: ['id', 'business_id', 'status'],
@@ -214,12 +238,14 @@ class OrderService {
         const createdOrder = await this.sequelize.transaction(async (t) => {
             await this._assertSalesPointBelongsToBusiness(data.sales_point_id, data.business_id, t);
 
+            const uniqueIds = [...new Set(items.map(i => i.product_id))];
             const products = await this.sequelize.models.Product.findAll({
-                where: {id: {[Op.in]: items.map(i => i.product_id)}},
-                transaction: t
+                where: {id: {[Op.in]: uniqueIds}},
+                transaction: t,
+                lock: t.LOCK.UPDATE,
             });
 
-            if (products.length !== items.length) {
+            if (products.length !== uniqueIds.length) {
                 throw new Error('Uno o más productos especificados no existen');
             }
 
@@ -228,7 +254,7 @@ class OrderService {
 
             const preparedItems = items.map((i) => {
                 const product = productMap.get(i.product_id);
-                const quantity = parseInt(i.quantity) || 1;
+                const quantity = parseInt(i.quantity, 10) || 1;
                 const unitPrice = Number(product.price);
                 const itemSubtotal = unitPrice * quantity;
                 subtotal += itemSubtotal;
@@ -239,6 +265,12 @@ class OrderService {
                     subtotal: itemSubtotal,
                 };
             });
+
+            const stockDeltas = new Map();
+            for (const [productId, quantity] of this._qtyByProduct(preparedItems)) {
+                stockDeltas.set(productId, -quantity);
+            }
+            await this._adjustProductsStock(stockDeltas, t);
 
             const discountTotal = Number(data.discount_total) || 0;
             const total = subtotal - discountTotal;
@@ -264,7 +296,6 @@ class OrderService {
             const itemsToCreate = preparedItems.map(i => ({...i, order_id: order.id}));
             await this.itemModel.bulkCreate(itemsToCreate, {transaction: t});
 
-            // 🆕 Registrar el pago automático de la orden recién creada
             await this._syncPayments(order.id, total, data, t);
 
             return this.model.findByPk(order.id, {
@@ -312,12 +343,8 @@ class OrderService {
         const updated = await this.sequelize.transaction(async (t) => {
             await existing.update(patch, {transaction: t});
 
-            // 🆕 antes solo se ajustaba el pago si `total` cambió (vía
-            // discount_total). Ahora también se ajusta si vino
-            // payment_method/payment_amount solos — ej: el cajero corrige el
-            // método de pago sin tocar el carrito ni el descuento.
             const total = patch.total !== undefined ? patch.total : Number(existing.total);
-            if (patch.total !== undefined || data.payment_method !== undefined || data.payment_amount !== undefined) {
+            if (patch.total !== undefined || data.payment_method !== undefined || data.payment_amount !== undefined || Array.isArray(data.payments)) {
                 await this._syncPayments(id, total, data, t);
             }
 
@@ -340,9 +367,22 @@ class OrderService {
             throw new Error('La orden ya se encuentra cancelada');
         }
 
-        await record.update({
-            status: 'cancelled',
-            cancellation_reason: reason.trim()
+        await this.sequelize.transaction(async (t) => {
+            const items = await this.itemModel.findAll({
+                where: {order_id: id},
+                transaction: t,
+            });
+
+            const stockDeltas = new Map();
+            for (const [productId, quantity] of this._qtyByProduct(items)) {
+                stockDeltas.set(productId, quantity);
+            }
+            await this._adjustProductsStock(stockDeltas, t);
+
+            await record.update({
+                status: 'cancelled',
+                cancellation_reason: reason.trim()
+            }, {transaction: t});
         });
 
         const cancelled = await this.model.findByPk(id, {include: this._includeItems()});
@@ -400,12 +440,14 @@ class OrderService {
         }
 
         return this.sequelize.transaction(async (t) => {
+            const uniqueIds = [...new Set(items.map(i => i.product_id))];
             const products = await this.sequelize.models.Product.findAll({
-                where: {id: {[Op.in]: items.map(i => i.product_id)}},
+                where: {id: {[Op.in]: uniqueIds}},
                 transaction: t,
+                lock: t.LOCK.UPDATE,
             });
 
-            if (products.length !== items.length) {
+            if (products.length !== uniqueIds.length) {
                 throw new Error('Uno o más productos especificados no existen');
             }
 
@@ -414,7 +456,7 @@ class OrderService {
 
             const preparedItems = items.map((i) => {
                 const product = productMap.get(i.product_id);
-                const quantity = parseInt(i.quantity) || 1;
+                const quantity = parseInt(i.quantity, 10) || 1;
                 const unitPrice = Number(product.price);
                 const itemSubtotal = unitPrice * quantity;
                 subtotal += itemSubtotal;
@@ -426,6 +468,19 @@ class OrderService {
                     subtotal: itemSubtotal,
                 };
             });
+
+            const oldItems = await this.itemModel.findAll({
+                where: {order_id: id},
+                transaction: t,
+            });
+            const oldQty = this._qtyByProduct(oldItems);
+            const newQty = this._qtyByProduct(preparedItems);
+            const stockDeltas = new Map();
+            for (const productId of new Set([...oldQty.keys(), ...newQty.keys()])) {
+                const delta = (oldQty.get(productId) || 0) - (newQty.get(productId) || 0);
+                if (delta !== 0) stockDeltas.set(productId, delta);
+            }
+            await this._adjustProductsStock(stockDeltas, t);
 
             await this.itemModel.destroy({where: {order_id: id}, transaction: t});
             await this.itemModel.bulkCreate(preparedItems, {transaction: t});
@@ -443,8 +498,6 @@ class OrderService {
 
             await record.update(patch, {transaction: t});
 
-            // 🆕 El total pudo cambiar al agregar/quitar productos —
-            // reajusta el pago automático para que siga cubriendo el total.
             await this._syncPayments(id, total, additionalData, t);
 
             const updated = await this.model.findByPk(id, {include: this._includeItems(), transaction: t});
