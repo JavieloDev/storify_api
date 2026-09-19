@@ -264,7 +264,7 @@
 //
 // module.exports = CategoryService;
 // src/services/category.service.js
-const { Op } = require('sequelize');
+const {Op} = require('sequelize');
 
 class CategoryService {
     constructor(sequelizeInstance) {
@@ -316,7 +316,7 @@ class CategoryService {
     async delete(id) {
         const [record, subcategoryCount] = await Promise.all([
             this.model.findByPk(id),
-            this.sequelize.models.Subcategory.count({ where: { category_id: id } })
+            this.sequelize.models.Subcategory.count({where: {category_id: id}})
         ]);
 
         if (!record) {
@@ -387,7 +387,7 @@ class CategoryService {
         const where = this._buildFilters(filters);
 
         const [total, rows] = await Promise.all([
-            this.model.count({ where }),
+            this.model.count({where}),
             this.model.findAll({
                 where,
                 limit: safeLimit,
@@ -422,44 +422,32 @@ class CategoryService {
 
     // ✅ Método específico para sincronización con since
     async findByBusiness(businessId, page = 1, limit = 10, filters = {}, since) {
-        const where = { business_id: businessId, ...filters };
+        const where = this._buildFilters(filters);
+        where.business_id = businessId;          // el path gana, no el query
+        delete where.id;                          // ids arbitrarios no se filtran por acá
+
         if (since) {
-            where.updated_at = { [Op.gt]: new Date(since) };
+            const sinceDate = new Date(since);
+            if (isNaN(sinceDate.getTime())) {
+                return {status: 'error', code: 400, message: 'El parámetro "since" no es una fecha válida', data: null};
+            }
+            where.updated_at = {[Op.gt]: sinceDate};
         }
 
         const safeLimit = Math.min(Number(limit) || 10, 100);
-        const currentPage = Number(page) || 1;
-        const offset = (currentPage - 1) * safeLimit;
+        const currentPage = Math.max(Number(page) || 1, 1);
 
-        const [total, rows] = await Promise.all([
-            this.model.count({ where }),
-            this.model.findAll({
-                where,
-                limit: safeLimit,
-                offset,
-                order: [['updated_at', 'ASC']],
-                include: [
-                    {
-                        model: this.sequelize.models.Subcategory,
-                        as: 'subcategories',
-                        required: false,
-                        attributes: ['id', 'name', 'active', 'priority']
-                    }
-                ]
-            })
-        ]);
+        const {rows, count} = await this.model.findAndCountAll({
+            where,
+            limit: safeLimit,
+            offset: (currentPage - 1) * safeLimit,
+            order: [['updated_at', 'ASC']],
+        });
 
         return {
-            status: 'success',
-            code: 200,
-            message: 'Categorías obtenidas correctamente',
-            data: rows.map(r => r.toJSON()),
-            pagination: {
-                page: currentPage,
-                limit: safeLimit,
-                total,
-                total_pages: Math.ceil(total / safeLimit)
-            }
+            status: 'success', code: 200, message: 'Dispositivos obtenidos correctamente',
+            data: rows,
+            pagination: {page: currentPage, limit: safeLimit, total: count, total_pages: Math.ceil(count / safeLimit)}
         };
     }
 
@@ -472,22 +460,22 @@ class CategoryService {
         return this.findAll({
             page,
             limit,
-            filters: { active: true },
+            filters: {active: true},
             orderBy: 'priority',
             orderDirection: 'ASC'
         });
     }
 
     async findWithProducts(page = 1, limit = 10) {
-        const { Subcategory, Product } = this.sequelize.models;
+        const {Subcategory, Product} = this.sequelize.models;
 
         const safeLimit = Math.min(Number(limit) || 10, 100);
         const currentPage = Number(page) || 1;
         const offset = (currentPage - 1) * safeLimit;
-        const where = { active: true };
+        const where = {active: true};
 
         const [total, rows] = await Promise.all([
-            this.model.count({ where }),
+            this.model.count({where}),
             this.model.findAll({
                 where,
                 limit: safeLimit,
@@ -505,7 +493,7 @@ class CategoryService {
                                 attributes: ['id', 'name', 'price', 'image'],
                                 limit: 5,
                                 required: false,
-                                where: { is_active: true }
+                                where: {is_active: true}
                             }
                         ]
                     }
@@ -531,33 +519,23 @@ class CategoryService {
 
     _buildFilters(filters) {
         const where = {};
-
-        if (filters.name) {
-            where.name = { [Op.like]: `%${filters.name}%` };
-        }
-
-        if (filters.business_id) {
-            where.business_id = filters.business_id;
-        }
-
-        if (filters.active !== undefined && filters.active !== null) {
-            where.active = filters.active === true || filters.active === 'true';
-        }
-
-        if (filters.ids && Array.isArray(filters.ids) && filters.ids.length > 0) {
-            where.id = { [Op.in]: filters.ids };
-        }
-
+        if (!filters || typeof filters !== 'object' || Array.isArray(filters)) return where;
+        if (filters.label) where.label = {[Op.iLike]: `%${filters.label}%`};   // Postgres: iLike, no like
+        if (filters.business_id) where.business_id = filters.business_id;
+        if (filters.device_uuid) where.device_uuid = filters.device_uuid;
+        if (filters.status) where.status = filters.status;
+        if (filters.platform) where.platform = filters.platform;
+        if (Array.isArray(filters.ids) && filters.ids.length) where.id = {[Op.in]: filters.ids};
         return where;
     }
 
     async getStats() {
         // 1 sola query agrupando por 'active'
-        const grouped = await this.model.count({ group: ['active'] });
+        const grouped = await this.model.count({group: ['active']});
 
-        const stats = { total: 0, active: 0, inactive: 0 };
+        const stats = {total: 0, active: 0, inactive: 0};
 
-        grouped.forEach(({ active, count }) => {
+        grouped.forEach(({active, count}) => {
             stats.total += count;
             if (active === true || active === 1) {
                 stats.active += count;
@@ -571,7 +549,7 @@ class CategoryService {
 
     async searchByName(query, limit = 10) {
         const where = {
-            name: { [Op.like]: `%${query}%` },
+            name: {[Op.like]: `%${query}%`},
             active: true
         };
 
